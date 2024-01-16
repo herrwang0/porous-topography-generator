@@ -1,0 +1,4 @@
+[submodule "thin-wall-topography"]
+	path = thin-wall-topography
+	url = https://github.com/herrwang0/thin-wall-topography
+	branch = add_methods_for_regrid
