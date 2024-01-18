@@ -4,12 +4,12 @@ import numpy
 import multiprocessing
 import functools
 import netCDF4
-sys.path.insert(0,'./thin-wall-topography/python')
-import GMesh
-import ThinWalls
-# import importlib
-# GMesh = importlib.import_module('thin-wall-topography.python.GMesh')
-# ThinWalls = importlib.import_module('thin-wall-topography.python.ThinWalls')
+# sys.path.insert(0,'./thin-wall-topography/python')
+# import GMesh
+# import ThinWalls
+import importlib
+GMesh = importlib.import_module('thin-wall-topography.python.GMesh')
+ThinWalls = importlib.import_module('thin-wall-topography.python.ThinWalls')
 
 class source_topo(object):
     """A container for source coords and data"""
@@ -474,15 +474,18 @@ class domain(ThinWalls.ThinWalls):
         subdomains = self.create_subdomains(pelayout, tgt_halo=tgt_halo, src=src, src_halo=src_halo,
                                             refine_loop_args=refine_loop_args, verbose=verbose)
         topo_gen_args['verbose'] = verbose
+        topo_gen_args['save_hits'] = not (hitmap is None)
+
         if nprocs>1:
             twlist = topo_gen_mp(subdomains.flatten(), nprocs=nprocs, topo_gen_args=topo_gen_args)
         else:
             twlist = [topo_gen(dm, **topo_gen_args) for dm in subdomains.flatten()]
-        twlist, hitlist = zip(*twlist)
+
+        if topo_gen_args['save_hits']:
+            twlist, hitlist = zip(*twlist)
+            hitmap.stitch_hits(hitlist)
 
         self.stitch_subdomains(twlist)
-        if hitmap is not None:
-            hitmap.stitch_hits(hitlist)
 
     def create_mask_domain(self, mask, tgt_halo=0, pole_radius=0.25):
         """Creates a domain for the masked north pole region
@@ -692,7 +695,7 @@ class domain(ThinWalls.ThinWalls):
         # print(no_sw.shape, no_so.shape, no_se.shape)
         return numpy.r_[numpy.c_[no_sw, no_so, no_se], numpy.c_[cyc_w, c, cyc_e], numpy.c_[fd_nw, fd_no, fd_ne]]
 
-def topo_gen(grid, do_effective=True, save_hits=True, verbose=True):
+def topo_gen(grid, do_mean_only=False, do_effective=True, save_hits=True, verbose=True):
     """Generate topography
 
     Parameters
@@ -704,20 +707,17 @@ def topo_gen(grid, do_effective=True, save_hits=True, verbose=True):
     tw : ThinWalls.ThinWalls object
     """
 
+    if do_mean_only: do_effective = False
+    if verbose: print(grid.domain_id)
+
     # Step 1: Refine grid and save the finest grid
-    if verbose:
-        print(grid.domain_id)
     finest_grid = grid.refine_loop(verbose=verbose)[-1]
     nrfl = finest_grid.rfl
 
-    hits = hitmap(lon=grid.lon_src, lat=grid.lat_src, from_cell_center=True)
-    hits[:] = finest_grid.source_hits(grid.lon_src, grid.lat_src, singularity_radius=0.0)
-    hits.box = grid.box_src
-
-    # if save_hits:
-    #     hits = hitmap(lon=grid.lon_src, lat=grid.lat_src, from_cell_center=True)
-    #     hits[:] = finest_grid.source_hits(grid.lon_src, grid.lat_src, singularity_radius=0.0)
-    #     hits.box = grid.box_src
+    if save_hits:
+        hits = hitmap(lon=grid.lon_src, lat=grid.lat_src, from_cell_center=True)
+        hits[:] = finest_grid.source_hits(grid.lon_src, grid.lat_src, singularity_radius=0.0)
+        hits.box = grid.box_src
 
     # Step 2: Create a ThinWalls object on the finest grid and coarsen back
     tw = ThinWalls.ThinWalls(lon=finest_grid.lon, lat=finest_grid.lat, rfl=finest_grid.rfl)
@@ -726,10 +726,12 @@ def topo_gen(grid, do_effective=True, save_hits=True, verbose=True):
 
       # Interpolate elevation to cell centers and edges (simple)
     tw.set_center_from_corner()
-    tw.set_edge_from_corner()
 
-      # Initialize effective depths
-    tw.init_effective_values()
+    if not do_mean_only:
+        tw.set_edge_from_corner()
+        if do_effective:
+            # Initialize effective depths
+            tw.init_effective_values()
 
       # Coarsen back
     for _ in range(nrfl):
@@ -745,12 +747,8 @@ def topo_gen(grid, do_effective=True, save_hits=True, verbose=True):
     tw.domain_id = grid.domain_id
     tw.max_rfl = nrfl
 
-    return tw, hits
-
-    # if save_hits:
-    #     return tw, hits
-    # else:
-    #     return tw
+    if save_hits: return tw, hits
+    else: return tw
 
 def topo_gen_mp(domain_list, nprocs=None, topo_gen_args={}):
     """A wrapper for multiprocessing topo_gen"""
@@ -763,7 +761,7 @@ def topo_gen_mp(domain_list, nprocs=None, topo_gen_args={}):
 
     return tw_list
 
-def write_output(domain, filename, format='NETCDF3_64BIT_OFFSET', history='', description='',
+def write_output(domain, filename, do_mean_only=False, format='NETCDF3_64BIT_OFFSET', history='', description='',
                  inverse_sign=True, elev_unit='m', dtype=numpy.float64, dtype_int=numpy.int32):
     """Output to netCDF
     """
@@ -788,7 +786,10 @@ def write_output(domain, filename, format='NETCDF3_64BIT_OFFSET', history='', de
         varout.long_name = long_name
 
     if description=='':
-        description = "Min, mean and max elevation at cell-centers and u/v-edges"
+        if do_mean_only:
+            description = "Mean topography at cell-centers"
+        else:
+            description = "Min, mean and max elevation at cell-centers and u/v-edges"
 
     ny, nx = domain.shape
 
@@ -798,58 +799,97 @@ def write_output(domain, filename, format='NETCDF3_64BIT_OFFSET', history='', de
     ncout.createDimension('nxq', nx+1)
     ncout.createDimension('nyq', ny+1)
 
-    # cell-centers
-    write_variable(ncout, signed(domain.c_simple.ave), 'c_simple_ave', 'c',
-                   long_name='Simple cell-center mean topography')
-    write_variable(ncout, signed(domain.c_simple.hgh), 'c_simple_hgh', 'c',
-                   long_name='Simple cell-center highest topography')
-    write_variable(ncout, signed(domain.c_simple.low), 'c_simple_low', 'c',
-                   long_name='Simple cell-center lowest topography')
+    if do_mean_only:
+        write_variable(ncout, signed(domain.c_simple.ave), 'depth', 'c',
+                    long_name='Simple cell-center mean topography')
+        write_variable(ncout, domain.c_refinelevel, 'c_refinelevel', 'c',
+                    long_name='Refinement level at cell-centers', units='nondim', dtype=dtype_int)
+    else:
+        # cell-centers
+        write_variable(ncout, signed(domain.c_simple.ave), 'c_simple_ave', 'c',
+                    long_name='Simple cell-center mean topography')
+        write_variable(ncout, signed(domain.c_simple.hgh), 'c_simple_hgh', 'c',
+                    long_name='Simple cell-center highest topography')
+        write_variable(ncout, signed(domain.c_simple.low), 'c_simple_low', 'c',
+                    long_name='Simple cell-center lowest topography')
 
-    write_variable(ncout, signed(domain.c_effective.ave), 'c_effective_ave', 'c',
-                   long_name='Effective cell-center mean topography')
-    write_variable(ncout, signed(domain.c_effective.hgh), 'c_effective_hgh', 'c',
-                   long_name='Effective cell-center highest topography')
-    write_variable(ncout, signed(domain.c_effective.low), 'c_effective_low', 'c',
-                   long_name='Effective cell-center lowest topography')
+        write_variable(ncout, signed(domain.c_effective.ave), 'c_effective_ave', 'c',
+                    long_name='Effective cell-center mean topography')
+        write_variable(ncout, signed(domain.c_effective.hgh), 'c_effective_hgh', 'c',
+                    long_name='Effective cell-center highest topography')
+        write_variable(ncout, signed(domain.c_effective.low), 'c_effective_low', 'c',
+                    long_name='Effective cell-center lowest topography')
 
-    # u-edges
-    write_variable(ncout, signed(domain.u_simple.ave), 'u_simple_ave', 'u',
-                   long_name='Simple u-edge mean topography')
-    write_variable(ncout, signed(domain.u_simple.hgh), 'u_simple_hgh', 'u',
-                   long_name='Simple u-edge highest topography')
-    write_variable(ncout, signed(domain.u_simple.low), 'u_simple_low', 'u',
-                   long_name='Simple u-edge lowest topography')
+        # u-edges
+        write_variable(ncout, signed(domain.u_simple.ave), 'u_simple_ave', 'u',
+                    long_name='Simple u-edge mean topography')
+        write_variable(ncout, signed(domain.u_simple.hgh), 'u_simple_hgh', 'u',
+                    long_name='Simple u-edge highest topography')
+        write_variable(ncout, signed(domain.u_simple.low), 'u_simple_low', 'u',
+                    long_name='Simple u-edge lowest topography')
 
-    write_variable(ncout, signed(domain.u_effective.ave), 'u_effective_ave', 'u',
-                   long_name='Effective u-edge mean topography')
-    write_variable(ncout, signed(domain.u_effective.hgh), 'u_effective_hgh', 'u',
-                   long_name='Effective u-edge highest topography')
-    write_variable(ncout, signed(domain.u_effective.low), 'u_effective_low', 'u',
-                   long_name='Effective u-edge lowest topography')
+        write_variable(ncout, signed(domain.u_effective.ave), 'u_effective_ave', 'u',
+                    long_name='Effective u-edge mean topography')
+        write_variable(ncout, signed(domain.u_effective.hgh), 'u_effective_hgh', 'u',
+                    long_name='Effective u-edge highest topography')
+        write_variable(ncout, signed(domain.u_effective.low), 'u_effective_low', 'u',
+                    long_name='Effective u-edge lowest topography')
 
-    # v-edges
-    write_variable(ncout, signed(domain.v_simple.ave), 'v_simple_ave', 'v',
-                   long_name='Simple v-edge mean topography')
-    write_variable(ncout, signed(domain.v_simple.hgh), 'v_simple_hgh', 'v',
-                   long_name='Simple v-edge highest topography')
-    write_variable(ncout, signed(domain.v_simple.low), 'v_simple_low', 'v',
-                   long_name='Simple v-edge lowest topography')
+        # v-edges
+        write_variable(ncout, signed(domain.v_simple.ave), 'v_simple_ave', 'v',
+                    long_name='Simple v-edge mean topography')
+        write_variable(ncout, signed(domain.v_simple.hgh), 'v_simple_hgh', 'v',
+                    long_name='Simple v-edge highest topography')
+        write_variable(ncout, signed(domain.v_simple.low), 'v_simple_low', 'v',
+                    long_name='Simple v-edge lowest topography')
 
-    write_variable(ncout, signed(domain.v_effective.ave), 'v_effective_ave', 'v',
-                   long_name='Effective v-edge mean topography')
-    write_variable(ncout, signed(domain.v_effective.hgh), 'v_effective_hgh', 'v',
-                   long_name='Effective v-edge highest topography')
-    write_variable(ncout, signed(domain.v_effective.low), 'v_effective_low', 'v',
-                   long_name='Effective v-edge lowest topography')
+        write_variable(ncout, signed(domain.v_effective.ave), 'v_effective_ave', 'v',
+                    long_name='Effective v-edge mean topography')
+        write_variable(ncout, signed(domain.v_effective.hgh), 'v_effective_hgh', 'v',
+                    long_name='Effective v-edge highest topography')
+        write_variable(ncout, signed(domain.v_effective.low), 'v_effective_low', 'v',
+                    long_name='Effective v-edge lowest topography')
 
-    # refinement levels
-    write_variable(ncout, domain.c_refinelevel, 'c_refinelevel', 'c',
-                   long_name='Refinement level at cell-centers', units='nondim', dtype=dtype_int)
-    write_variable(ncout, domain.u_refinelevel, 'u_refinelevel', 'u',
-                   long_name='Refinement level at u-edges', units='nondim', dtype=dtype_int)
-    write_variable(ncout, domain.v_refinelevel, 'v_refinelevel', 'v',
-                   long_name='Refinement level at v-edges', units='nondim', dtype=dtype_int)
+        # refinement levels
+        write_variable(ncout, domain.c_refinelevel, 'c_refinelevel', 'c',
+                    long_name='Refinement level at cell-centers', units='nondim', dtype=dtype_int)
+        write_variable(ncout, domain.u_refinelevel, 'u_refinelevel', 'u',
+                    long_name='Refinement level at u-edges', units='nondim', dtype=dtype_int)
+        write_variable(ncout, domain.v_refinelevel, 'v_refinelevel', 'v',
+                    long_name='Refinement level at v-edges', units='nondim', dtype=dtype_int)
+
+    ncout.description = description
+    ncout.history = history
+    ncout.close()
+
+def write_hitmap(hitmap, filename, format='NETCDF3_64BIT_OFFSET', history='', description='', dtype=numpy.int32):
+    """Output to netCDF
+    """
+    if description=='':
+        description = 'Map of "hits" of the source data'
+
+    ny, nx = hitmap.shape
+
+    ncout = netCDF4.Dataset(filename, mode='w', format=format)
+    ncout.createDimension('nx', nx)
+    ncout.createDimension('ny', ny)
+    ncout.createDimension('nxq', nx+1)
+    ncout.createDimension('nyq', ny+1)
+
+    varout = ncout.createVariable('hitmap', dtype, ('ny','nx'))
+    varout[:] = hitmap[:]
+    varout.units = 'nondim'
+    varout.long_name = '>0 source data is used; 0 not'
+
+    varout = ncout.createVariable('lat', numpy.float64, ('nyq',))
+    varout[:] = hitmap.lat[:,0]
+    varout.units = 'degree'
+    varout.long_name = 'Latitude at the nodes'
+
+    varout = ncout.createVariable('lon', numpy.float64, ('nxq',))
+    varout[:] = hitmap.lon[0,:]
+    varout.units = 'degree'
+    varout.long_name = 'Longitude at the nodes'
 
     ncout.description = description
     ncout.history = history
@@ -876,8 +916,13 @@ def main(argv):
     parser_src.add_argument("--lon_src", default='lon', help='Field name in source file for longitude')
     parser_src.add_argument("--lat_src", default='lat', help='Field name in source file for latitude')
     parser_src.add_argument("--elev", default='elevation', help='Field name in source file for elevation')
-    parser_src.add_argument("--remove_repeat_lon", action='store_true',
+    parser_src.add_argument("--remove_src_repeat_lon", action='store_true',
                             help='If specified, the repeating longitude in the last column is removed. Elevation along that longitude will be the mean.')
+
+    parser_cc = parser.add_argument_group('Calculation options')
+    parser_cc.add_argument("--do_mean_only", action='store_true', help='Calculate only the mean topography at cell centers.')
+    parser_cc.add_argument("--do_porous_effective", action='store_true', help='Calcuate effective depth in porous topography.')
+    parser_cc.add_argument("--save_hits", action='store_true', help='Save hitmap to a file.')
 
     parser_pe = parser.add_argument_group('Parallelism options')
     parser_pe.add_argument("--use_serial", action='store_true', help='If specified, use serial.')
@@ -887,6 +932,7 @@ def main(argv):
     parser_pe.add_argument("--max_mb", default=10240, type=float, help='Memory limit per processor')
 
     parser_rgd = parser.add_argument_group('Regrid options')
+    parser_rgd.add_argument("--use_center", action='store_true', help='Use cell centers for nearest neighbor.')
     parser_rgd.add_argument("--fixed_refine_level", default=-1, type=int, help='Force refinement to a specific level.')
     parser_rgd.add_argument("--refine_in_3d", action='store_true', help='If specified, use great circle for grid interpolation.')
     parser_rgd.add_argument("--no_resolution_limit", action='store_true',
@@ -909,7 +955,7 @@ def main(argv):
     lon_src = netCDF4.Dataset(args.source)[args.lon_src][:]
     lat_src = netCDF4.Dataset(args.source)[args.lat_src][:]
     elev = netCDF4.Dataset(args.source)[args.elev][:]
-    if args.remove_repeat_lon:
+    if args.remove_src_repeat_lon:
         lon_src = lon_src[:-1]
         elev = numpy.c_[(elev[:,1]+elev[:,-1])*0.5, elev[:,1:-1]]
     src = source_topo(lon_src, lat_src, elev)
@@ -933,17 +979,23 @@ def main(argv):
     use_mp = not args.use_serial
     nprocs = args.nprocs
 
+    # Calculation options
+    do_effective = False if args.do_mean_only else args.do_porous_effective
+    topo_gen_args = {'do_mean_only':args.do_mean_only,
+                     'do_effective':do_effective,
+                     }
+
     # Regridding and topo_gen options
     north_pole_lat = args.pole_start
     np_lat_end = args.pole_end
     np_lat_step = args.pole_step
-    refine_options = {'resolution_limit': not args.no_resolution_limit,
+    refine_options = {'use_center': args.use_center,
+                      'resolution_limit': not args.no_resolution_limit,
                       'fixed_refine_level': args.fixed_refine_level,
                       'work_in_3d': args.refine_in_3d,
                       'singularity_radius': 90.0-args.pole_start,
                       'max_mb': args.max_mb
                       }
-    topo_gen_args = {'do_effective':False, 'save_hits':False}
 
     if args.verbose:
         print('fixed_refine_level: ', refine_options['fixed_refine_level'])
@@ -955,7 +1007,8 @@ def main(argv):
 
     # Create the target grid domain
     dm = domain(lon=lonb_tgt, lat=latb_tgt, reentrant_x=True, bipolar_n=True, pole_radius=refine_options['singularity_radius'])
-    hm = hitmap(lon=lon_src, lat=lat_src, from_cell_center=True)
+    hm = None
+    if args.save_hits: hm = hitmap(lon=lon_src, lat=lat_src, from_cell_center=True)
 
     # Regrid
     dm.regrid_topography(pelayout=pe, tgt_halo=args.tgt_halo, nprocs=nprocs, src=src, src_halo=0,
@@ -964,7 +1017,8 @@ def main(argv):
     dm.regrid_topography_masked(lat_end=np_lat_end, lat_step=np_lat_step, pelayout=pe_p, nprocs=nprocs, src=src,
                                 refine_loop_args=refine_options, topo_gen_args=topo_gen_args, hitmap=hm, verbose=args.verbose)
     # Output to a netCDF file
-    write_output(dm, args.output, format='NETCDF3_64BIT_OFFSET', history=' '.join(argv))
+    write_output(dm, args.output, do_mean_only=args.do_mean_only, format='NETCDF3_64BIT_OFFSET', history=' '.join(argv))
+    if args.save_hits: write_hitmap(hm, 'hitmap.nc')
 
 if __name__ == "__main__":
     main(sys.argv[1:])
