@@ -4,12 +4,13 @@ import numpy
 import multiprocessing
 import functools
 import netCDF4
-# sys.path.insert(0,'./thin-wall-topography/python')
-# import GMesh
-# import ThinWalls
-import importlib
-GMesh = importlib.import_module('thin-wall-topography.python.GMesh')
-ThinWalls = importlib.import_module('thin-wall-topography.python.ThinWalls')
+sys.path.insert(0,'/Users/hewang/lib/thin-wall-topography/python')
+# sys.path.insert(0,'/Users/hewang/lib/porous-topography-generator/thin-wall-topography/python')
+import GMesh
+import ThinWalls
+# import importlib
+# GMesh = importlib.import_module('thin-wall-topography.python.GMesh')
+# ThinWalls = importlib.import_module('thin-wall-topography.python.ThinWalls')
 
 class source_topo(object):
     """A container for source coords and data"""
@@ -79,8 +80,8 @@ class refine_wrapper(GMesh.GMesh):
         move_north_pole_lon : bool, optional
             If true, re-assign the longitude of the north pole (lat==90N) (if it is inside of the domain) to the longitude
             of the neighbor grid. Default is False.
-        lon_src, lat_src : array of float, optional
-            Source grid arrays.
+        lon_src, lat_src : GMesh.IntCoord objects, optional
+            Integerized source data coordinates.
         elev_src : array of float, optional
             Source elevation field.
         fit_src_coords : bool, optional
@@ -111,18 +112,20 @@ class refine_wrapper(GMesh.GMesh):
 
         self.north_masks = mask_recs
         self.refine_loop_args = refine_loop_args
-        self._fit_src_coords(src.lon, src.lat, src.elev, do_fit=fit_src_coords, halo=src_halo)
+        # self._fit_src_coords(src.lon, src.lat, src.elev, do_fit=fit_src_coords, halo=src_halo)
+        self._fit_src_coords_test(src.lon, src.lat, src.elev, do_fit=fit_src_coords, halo=src_halo)
 
     def __str__(self):
-        dellon, dellat = (self.lon_src[1]-self.lon_src[0]), (self.lat_src[1]-self.lat_src[0])
+        # dellon, dellat = (self.lon_src[1]-self.lon_src[0]), (self.lat_src[1]-self.lat_src[0])
+        # dellon, dellat = self.lon_src.dr, (self.lat_src[1]-self.lat_src[0])
         disp = [str(type(self)),
                 "Sub-domain identifier: (%2i, %2i)"%self.domain_id,
                 "Target grid size (nj ni): (%9i, %9i)"%(self.nj, self.ni),
-                "Source grid size (nj ni): (%9i, %9i), indices: %s"%(self.lat_src.size, self.lon_src.size, self.box_src),
+                # "Source grid size (nj ni): (%9i, %9i), indices: %s"%(self.lat_src.size, self.lon_src.size, self.box_src),
                 "Target grid range (lat lon): (%10.6f, %10.6f)  (%10.6f, %10.6f)"%(self.lat.min(), self.lat.max(),
                                                                                    numpy.mod(self.lon.min(), 360), numpy.mod(self.lon.max(), 360)),
-                "Source grid range (lat lon): (%10.6f, %10.6f)  (%10.6f, %10.6f)"%(self.lat_src[0]-0.5*dellat, self.lat_src[-1]+0.5*dellat,
-                                                                                   numpy.mod(self.lon_src[0]-0.5*dellon, 360), numpy.mod(self.lon_src[-1]+0.5*dellon, 360))
+                # "Source grid range (lat lon): (%10.6f, %10.6f)  (%10.6f, %10.6f)"%(self.lat_src[0]-0.5*dellat, self.lat_src[-1]+0.5*dellat,
+                                                                                #    numpy.mod(self.lon_src[0]-0.5*dellon, 360), numpy.mod(self.lon_src[-1]+0.5*dellon, 360))
                ]
         if len(self.north_masks)>0:
             disp.append('North Pole rectangles: ')
@@ -141,6 +144,33 @@ class refine_wrapper(GMesh.GMesh):
                     self.lon[jjj, iii] = self.lon[jjj, iii-1]
                 except IndexError:
                     self.lon[jjj, iii] = self.lon[jjj, iii+1]
+    def _fit_src_coords_test(self, lon_src, lat_src, elev_src, do_fit=True, halo=0):
+        """Returns the four-element indices of source grid that covers the current domain."""
+        sni, snj = lon_src.size, lat_src.size
+        dellon, dellat = (lon_src[-1]-lon_src[0])/(sni-1), (lat_src[-1]-lat_src[0])/(snj-1)
+        if do_fit:
+
+            # ist_src = (numpy.mod(numpy.floor(numpy.mod(self.lon.min()-lon_src[0]+0.5*dellon,360)/dellon)-halo+sni),sni).astype(int)
+            # ied_src = (numpy.mod(numpy.floor(numpy.mod(self.lon.max()-lon_src[0]+0.5*dellon,360)/dellon)+halo+sni),sni).astype(int)+1
+            ist_src = int(numpy.floor(numpy.mod(self.lon.min()-lon_src[0]+0.5*dellon,360)/dellon)-halo)
+            if ist_src<0: ist_src += sni
+            ied_src = int(numpy.floor(numpy.mod(self.lon.max()-lon_src[0]+0.5*dellon,360)/dellon)+halo)+1
+            if ied_src>sni: ied_src -= sni
+            jst_src = int(min(max(numpy.floor(0.5+(self.lat.min()-lat_src[0])/dellat-halo),0.0),snj-1))
+            jed_src = int(min(max(numpy.floor(0.5+(self.lat.max()-lat_src[0])/dellat+halo),0.0),snj-1))+1
+            if ist_src+1==ied_src: ist_src, ied_src = 0, sni # All longitudes are included.
+
+            if ist_src>ied_src:
+                self.elev_src = numpy.c_[elev_src[jst_src:jed_src,ist_src:], elev_src[jst_src:jed_src,:ied_src]]
+            else:
+                self.elev_src = elev_src[jst_src:jed_src:,ist_src:ied_src]
+        else:
+            jst_src, jed_src, ist_src, ied_src = 0, snj, 0, sni
+            self.elev_src = elev_src
+
+        self.box_src = (jst_src, jed_src, ist_src, ied_src)
+        self.lon_src = GMesh.IntCoord(lon_src[0], dellon, sni, ist_src, ied_src)
+        self.lat_src = GMesh.IntCoord(lat_src[0], dellat, snj, jst_src, jed_src)
 
     def _fit_src_coords(self, lon_src, lat_src, elev_src, do_fit=True, halo=0):
         """Returns the four-element indices of source grid that covers the current domain."""
@@ -206,9 +236,9 @@ class domain(ThinWalls.ThinWalls):
         if self.bipolar_n:
             assert self.ni%2==0, 'An odd number ni does not work with bi-polar cap.'
             num_north_pole=2
-        self.c_refinelevel = numpy.zeros( self.shape )
-        self.u_refinelevel = numpy.zeros( (self.shape[0],self.shape[1]+1) )
-        self.v_refinelevel = numpy.zeros( (self.shape[0]+1,self.shape[1]) )
+        self.c_refinelevel = numpy.zeros( self.shape, dtype=numpy.int32 )
+        self.u_refinelevel = numpy.zeros( (self.shape[0],self.shape[1]+1), dtype=numpy.int32 )
+        self.v_refinelevel = numpy.zeros( (self.shape[0]+1,self.shape[1]), dtype=numpy.int32 )
 
         self.pole_radius = pole_radius
         self._find_north_pole_rectangles(num_north_pole=num_north_pole)
@@ -251,20 +281,33 @@ class domain(ThinWalls.ThinWalls):
         else:
             raise Exception('Currently only two north pole rectangles are supported.')
 
-    def find_local_masks(self, box):
+    def find_local_masks(self, box, halo):
         """Finds where the north pole rectangles overlap with the subdomain"""
         masks = []
         jst, jed, ist, ied = box
+        jsth, jedh, isth, iedh = jst-halo, jed+halo, ist-halo, ied+halo
         for jstm, jedm, istm, iedm in self.north_mask:
-            if (not ((istm>=ied) or iedm<=ist)) and (not ((jstm>=jed) or (jedm<=jst))):
-                j0, j1, i0, i1 = max(jstm,jst)-jst, min(jedm,jed)-jst, max(istm,ist)-ist, min(iedm,ied)-ist
-                if jedm==self.nj and jed>self.nj: j1 = jed
-                # The following addresses a very trivial case when the mask reaches the southern bounndary, which may only happen in tests.
-                if jstm==0 and jst<0: j0 = jst
+            if (not ((istm>=iedh) or iedm<=isth)) and (not ((jstm>=jedh) or (jedm<=jsth))):
+                # Relative indices
+                j0, j1, i0, i1 = max(jstm,jsth)-jsth, min(jedm,jedh)-jsth, max(istm,isth)-isth, min(iedm,iedh)-isth
+                # if mask boundary is beyond subdomain boundary but within halo, ignore halo
+                if jstm<=jst:
+                    j0 = 0
+                if jedm>=jed:
+                    j1 = jedh - jsth
+                if istm<=ist:
+                    i0 = 0
+                if iedm>=ied:
+                    i1 = iedh - isth
+                # if jedm==self.nj and jed>self.nj: j1 = jed-jst
+                # # The following addresses a very trivial case when the mask reaches
+                # # the southern bounndary, which may only happen in tests.
+                # if jstm==0 and jst<0: j0 = 0
                 masks.append((j0, j1, i0, i1))
         return masks
 
-    def create_subdomains(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, src=None, src_halo=0, refine_loop_args={}, verbose=False):
+    def create_subdomains(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, src=None, src_halo=0,
+                          refine_loop_args={}, verbose=False):
         """Creates a list of sub-domains with corresponding source lon, lat and elev sections.
 
         Parameters
@@ -272,12 +315,14 @@ class domain(ThinWalls.ThinWalls):
         pelayout : tuple of integers, (nj, ni)
             Number of sub-domains in each direction
         x_sym, y_sym : boo, optional
-            Whether try to use symmetric domain decomposition in x or y. The default is x_sym=True and y_sym=False.
+            Whether try to use symmetric domain decomposition in x or y.
+            Default is x_sym=True and y_sym=False.
         src : source_topo object, optional
             Source coordinates and topography
         src_halo : integer, optional
             Halo size of the source grid in either direction.
         refine_loop_args : dict, optional
+        verbose : bool, optional
 
         Returns
         ----------
@@ -288,9 +333,11 @@ class domain(ThinWalls.ThinWalls):
 
         if verbose:
             print('Domain is decomposed as ', pelayout)
-        if pelayout[1] == 1: print('WARNING: only 1 subdomain in i-direction, which may not work with bi-polar cap.')
-        if (not x_sym) and self.bipolar_n: print('WARNING: domain decomposition is not guaranteed to be symmetric in x direction, \
-            which may not work with bi-polar cap.')
+        if pelayout[1]==1 and tgt_halo>0:
+            print('WARNING: only 1 subdomain in i-direction, which may not work with bi-polar cap.')
+        if (not x_sym) and self.bipolar_n:
+            print(('WARNING: domain decomposition is not guaranteed to be symmetric in x direction, ',
+                   'which may not work with bi-polar cap.'))
 
         j_domain = domain.decompose_domain(self.nj, pelayout[0], symmetric=y_sym)
         i_domain = domain.decompose_domain(self.ni, pelayout[1], symmetric=x_sym)
@@ -304,65 +351,163 @@ class domain(ThinWalls.ThinWalls):
                 lon = domain.slice(self.lon, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.bipolar_n)
                 lat = domain.slice(self.lat, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.bipolar_n)
 
-                # Offset longitude. This is rather ad hoc for cyclic N-W boundary and folding northern boundary.
-                nj, ni = box_data[1]-box_data[0]+1, box_data[3]-box_data[2]+1
-                lon = lon.copy()
-                if self.reentrant_x:
-                    if self.bipolar_n:
-                        lon[:self.nj-jst+tgt_halo+1, :-ni+tgt_halo-ist] -= 360.0
-                        lon[:self.nj-jst+tgt_halo+1, self.ni-ist+tgt_halo+1:] += 360.0
-                    else:
-                        lon[:, :-ni+tgt_halo-ist] -= 360.0
-                        lon[:, self.ni-ist+tgt_halo+1:] += 360.0
-                if self.bipolar_n and jed==self.nj:
-                    iq1, iq3 = self.ni//4, self.ni//4*3
-                    if ist<=iq1: lon[nj-tgt_halo:nj, -ni+tgt_halo-ist:iq1-ist+tgt_halo+1] -= 360.0
-                    if ied>=iq3: lon[nj-tgt_halo:nj, -ni+iq3-ist+tgt_halo:self.ni-ist+tgt_halo+1] += 360.0
+                lon = self.offset_halo_lon(lon, (jst, jed, ist, ied), tgt_halo)
+                # # Offset longitude. This is rather ad hoc for cyclic N-W boundary and folding northern boundary.
+                # nj, ni = box_data[1]-box_data[0]+1, box_data[3]-box_data[2]+1
+                # lon = lon.copy()
+                # if self.reentrant_x:
+                #     if self.bipolar_n:
+                #         lon[:self.nj-jst+tgt_halo+1, :-ni+tgt_halo-ist] -= 360.0
+                #         lon[:self.nj-jst+tgt_halo+1, self.ni-ist+tgt_halo+1:] += 360.0
+                #     else:
+                #         lon[:, :-ni+tgt_halo-ist] -= 360.0
+                #         lon[:, self.ni-ist+tgt_halo+1:] += 360.0
+                # if self.bipolar_n and jed==self.nj:
+                #     iq1, iq3 = self.ni//4, self.ni//4*3
+                #     if ist<=iq1: lon[nj-tgt_halo:nj, -ni+tgt_halo-ist:iq1-ist+tgt_halo+1] -= 360.0
+                #     if ied>=iq3: lon[nj-tgt_halo:nj, -ni+iq3-ist+tgt_halo:self.ni-ist+tgt_halo+1] += 360.0
 
-                masks = self.find_local_masks(box_data)
-                chunks[pe_j, pe_i] = refine_wrapper(lon=lon, lat=lat, domain_id=(pe_j, pe_i), src=src, fit_src_coords=True, src_halo=src_halo,
+                masks = self.find_local_masks((jst, jed, ist, ied), tgt_halo)
+                chunks[pe_j, pe_i] = refine_wrapper(lon=lon, lat=lat, domain_id=(pe_j, pe_i),
+                                                    src=src, fit_src_coords=True, src_halo=src_halo,
                                                     mask_recs=masks, refine_loop_args=refine_loop_args)
                 if verbose: print(chunks[pe_j, pe_i])
         return chunks
 
-    def stitch_subdomains(self, thinwalls_list, ignore_inconsistency=True):
+    def create_mask_domain(self, mask, tgt_halo=0, pole_radius=0.25):
+        """Creates a domain for the masked north pole region
+
+        Parameters
+        ----------
+        mask : tuple
+            Tuple of mask rectangle indices
+        tgt_halo : int, optional
+            Halo size
+        pole_radius : float, optional
+            Polar radius in the new mask domain
+        Returns
+        ----------
+        Output : domain class
+        """
+        jst, jed, ist, ied = mask
+        mask_halo = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
+        lon = domain.slice(self.lon, box=mask_halo, cyclic_zonal=False, fold_north=True)
+        lat = domain.slice(self.lat, box=mask_halo, cyclic_zonal=False, fold_north=True)
+
+        lon = self.offset_halo_lon(lon, (jst, jed, ist, ied), tgt_halo)
+
+        # nj, ni = mask_halo[1]-mask_halo[0]+1, mask_halo[3]-mask_halo[2]+1
+        # if self.bipolar_n and jed==self.nj:
+        #     iq1, iq3 = self.ni//4, self.ni//4*3
+        #     if ist<=iq1: lon[nj-tgt_halo:nj, -ni+tgt_halo-ist:iq1-ist+tgt_halo+1] -= 360.0
+        #     if ied>=iq3: lon[nj-tgt_halo:nj, -ni+iq3-ist+tgt_halo:self.ni-ist+tgt_halo+1] += 360.0
+
+        return domain(lon=lon, lat=lat, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius)
+
+    @staticmethod
+    def compare_edges(edge1, edge2, rfl1, rfl2, except_level=0, verbose=True, message=''):
+        """Check if two edges are identical and if not, return the proper one.
+
+        Parameters
+        ----------
+        edge1, edge2 : ThinWalls.Stats object
+            Edges at the same grid location from two sources (e.g. different tiles).
+        rfl1, rfl2 : int
+            Corresponding maximum refinement levels of the two edges.
+        except_level : int, optional
+            Controls whether stopping the script or reconciling edges with different heights.
+            0 : raise an exception and stop the script if there is difference.
+            1 : differences between edges with different RFLs are tolerated. Use the heights
+                of the edge with higher refinement level.
+            2 : all differences are tolerated. If the two edges have the same RFL, max() is
+                used to determine the final low, ave and hgh. Should be used for debug only.
+        verbose : bool, optional
+            If true, screen display the differences and how they are treated.
+        message : str, optional
+            Information (tile ID, measure) added to screen display.
+
+        Output
+            edge : ThinWalls.Stats object
+        ----------
+
+        """
+        ndiff_hgh = (edge1.hgh!=edge2.hgh).sum()
+        ndiff_ave = (edge1.ave!=edge2.ave).sum()
+        ndiff_low = (edge1.hgh!=edge2.hgh).sum()
+
+        str_diff = '[hgh: {:4d}, ave: {:4d}, low: {:4d}]'.format(ndiff_hgh, ndiff_ave, ndiff_low)
+        str_rfls = '[rfl={:2d} vs rfl={:2d}]'.format(rfl1, rfl2)
+        msg = ' '.join(['Edge differ', str_diff, ':', message, str_rfls])+'. '
+        if ndiff_hgh+ndiff_ave+ndiff_low!=0:
+            if except_level==0:
+                raise Exception(msg)
+            if rfl1!=rfl2:
+                if verbose:
+                    print(msg+'Use higher rfl')
+                if rfl1>rfl2:
+                    return edge1
+                else:
+                    return edge2
+            else:
+                if except_level==1:
+                    raise Exception(msg)
+                if verbose:
+                    print(msg+'Use shallower depth')
+                edge = ThinWalls.Stats(edge1.shape)
+                edge.low = numpy.maximum(edge1.low, edge2.low)
+                edge.ave = numpy.maximum(numpy.maximum(edge1.ave, edge2.ave), edge.low)
+                edge.hgh = numpy.maximum(numpy.maximum(edge1.hgh, edge2.hgh), edge.ave)
+                return edge
+        else:
+            if rfl1!=rfl2 and verbose: # This should hardly happen.
+                print(message+' have the same edge but different refinement levels '+str_rfls+'.')
+            return edge1
+
+    def stitch_subdomains(self, thinwalls_list, except_level=0, verbose=True):
         """Stitch subdomain depth fields (u,v,c)
 
         Parameters
         ----------
         thinwalls_list : list
             A list of ThinWalls class in the subdomains
-        reentrant_x : bool
-            If true, the parent domain is assumed to be reentrant in x direction
+        except_level : int, optional
+            Input for compare_edges
+        verbose : bool, optional
+            Input for compare_edges
         """
-        def boundary_edge(tw1, tw2, halo=0, axis=0, fold_north=False, ignore_inconsistency=True):
-            """Returns the edge depth parameters on the shared walls of the subdomains
-            Roles:
-            1. If refinement levels are different, use the heights from high refinement domain
-            2. If refinement levels are the same, the shared boundary shoud in theory be the same with adequate halo.
-                If there are differences, it needs further investigation. For test purposes, there is a switch to ignore
-                any difference, and use the shallower depth for hgh, ave and low in either measures.
+
+        def subdomain_edge(tw1, tw2, halo=0, axis=0, fold_north=False, except_level=2, verbose=True):
+            """A wrapper for treating shared edges between two subdomains with compare_edges method.
 
             Parameters
             ----------
             tw1, tw2 : ThinWalls.ThinWalls object
                 Two neighboring subdomains, tw1 (left/bottom) and tw2 (right/top)
-            axis : integer
+            halo : int, optional
+                Target grid halo size.
+            axis : integer, optional
                 The axis index, 0 for y direction and 1 for x direction
-            measure : string
-                'simple', 'effective'
+            fold_north : bool, optional
+                If true, the two subdomains are connected at the folding northern boundary.
+            except_level : int, optional
+                Input for compare_edges
+            verbose : bool, optional
+                Input for compare_edges
 
             Output
             ----------
-            edge : ThinWall.Stat object
-                Edge depth parameters (hgh, ave and low)
-            max_rfl : int
+            edge_s : ThinWall.Stat object
+                Edge Simple depth parameters (hgh, ave and low)
+            edge_e : ThinWall.Stat object
+                Edge Effective depth parameters (hgh, ave and low)
+            rfl : int
                 Refinement level
             """
             nj1, ni1 = tw1.shape
             nj2, ni2 = tw2.shape
+            msg = '{} and {}'.format(tw1.domain_id, tw2.domain_id)
             if axis==0:
-                assert ni1==ni2, 'Neighbor subdomains %s and %s in j direction have different Ni.'%(tw1.domain_id, tw2.domain_id)
+                assert ni1==ni2, msg+' have different Ni.'
                 s1 = (nj1-halo, slice(halo,ni1-halo))
                 if fold_north:
                     s2 = (nj2-halo, slice(ni1-halo-1,-ni1+halo-1,-1))
@@ -371,51 +516,17 @@ class domain(ThinWalls.ThinWalls):
                 edge1 = {'simple':tw1.v_simple[s1], 'effective':tw1.v_effective[s1]}
                 edge2 = {'simple':tw2.v_simple[s2], 'effective':tw2.v_effective[s2]}
             elif axis==1:
-                assert nj1==nj2, 'Neighbor subdomains %s and %s in i direction have different Nj.'%(tw1.domain_id, tw2.domain_id)
+                assert nj1==nj2, msg+' have different Nj.'
                 s1, s2 = (slice(halo,nj1-halo), ni1-halo), (slice(halo,nj1-halo), halo)
                 edge1 = {'simple':tw1.u_simple[s1], 'effective':tw1.u_effective[s1]}
                 edge2 = {'simple':tw2.u_simple[s2], 'effective':tw2.u_effective[s2]}
             else: raise Exception('Axis error')
 
-            if tw1.max_rfl != tw2.max_rfl:
-                print('WARNING: Edge between %s and %s has different refinement levels [%d vs %d].'\
-                      %(tw1.domain_id, tw2.domain_id, tw1.max_rfl, tw2.max_rfl))
-                print('Use the edge with higher refinement level.')
-                if tw1.max_rfl>tw2.max_rfl: return edge1['simple'], edge1['effective'], tw1.max_rfl
-                else: return edge2['simple'], edge2['effective'], tw1.max_rfl
-            else:
-                edge_s = compare_edges(edge1['simple'], edge2['simple'], tw1, tw2, 'simple',
-                                       ignore_inconsistency=ignore_inconsistency)
-                edge_e = compare_edges(edge1['effective'], edge2['effective'], tw1, tw2, 'effective',
-                                       ignore_inconsistency=ignore_inconsistency)
-                return edge_s, edge_e, tw1.max_rfl
-        def compare_edges(edge1, edge2, tw1, tw2, measure, ignore_inconsistency=True):
-            ndiff_hgh = (edge1.hgh!=edge2.hgh).sum()
-            ndiff_ave = (edge1.ave!=edge2.ave).sum()
-            ndiff_low = (edge1.hgh!=edge2.hgh).sum()
-
-            msg_hgh = 'Edge between %s and %s [rfl=%d] has %d different %s highs.'\
-                %(tw1.domain_id, tw2.domain_id, tw1.max_rfl, ndiff_hgh, measure)
-            msg_ave = 'Edge between %s and %s [rfl=%d] has %d different %s averages.'\
-                %(tw1.domain_id, tw2.domain_id, tw1.max_rfl, ndiff_ave, measure)
-            msg_low = 'Edge between %s and %s [rfl=%d] has %d different %s lows.'\
-                %(tw1.domain_id, tw2.domain_id, tw1.max_rfl, ndiff_low, measure)
-            edge = edge1
-            if ignore_inconsistency:
-                if ndiff_hgh!=0: print('WARNING:', msg_hgh)
-                if ndiff_ave!=0: print('WARNING:', msg_ave)
-                if ndiff_low!=0: print('WARNING:', msg_low)
-                if ndiff_hgh+ndiff_ave+ndiff_low!=0:
-                    print('Use the shallower edge')
-                    edge = ThinWalls.Stats(edge1.shape)
-                    edge.low = numpy.maximum(edge1.low, edge2.low)
-                    edge.ave = numpy.maximum(numpy.maximum(edge1.ave, edge2.ave), edge.low)
-                    edge.hgh = numpy.maximum(numpy.maximum(edge1.hgh, edge2.hgh), edge.ave)
-            else:
-                assert ndiff_hgh==0, msg_hgh
-                assert ndiff_ave==0, msg_ave
-                assert ndiff_low==0, msg_low
-            return edge
+            edge_s = domain.compare_edges(edge1['simple'], edge2['simple'], tw1.max_rfl, tw2.max_rfl,
+                                          except_level=except_level, verbose=verbose, message=msg+' (simple)')
+            edge_e = domain.compare_edges(edge1['effective'], edge2['effective'], tw1.max_rfl, tw2.max_rfl,
+                                          except_level=except_level, verbose=verbose, message=msg+ ' (effective)')
+            return edge_s, edge_e, max(tw1.max_rfl, tw2.max_rfl)
 
         npj, npi = self.pelayout.shape
 
@@ -424,6 +535,7 @@ class domain(ThinWalls.ThinWalls):
         for tw in thinwalls_list:
             boxes[tw.domain_id] = tw
 
+        # aliasing
         Cs, Us, Vs = self.c_simple, self.u_simple, self.v_simple
         Ce, Ue, Ve = self.c_effective, self.u_effective, self.v_effective
         Cr, Ur, Vr = self.c_refinelevel, self.u_refinelevel, self.v_refinelevel
@@ -431,45 +543,151 @@ class domain(ThinWalls.ThinWalls):
         for iy in range(npj):
             for ix in range(npi):
                 (jst, jed, ist, ied), halo = self.pelayout[iy, ix]
+                # cell center sizes
                 nj, ni = boxes[iy,ix].shape
-                Cs[jst:jed,ist:ied], Ce[jst:jed,ist:ied] = boxes[iy,ix].c_simple[halo:nj-halo,halo:ni-halo], boxes[iy,ix].c_effective[halo:nj-halo,halo:ni-halo]
-                Us[jst:jed,ist:ied+1], Ue[jst:jed,ist:ied+1] = boxes[iy,ix].u_simple[halo:nj-halo,halo:ni+1-halo], boxes[iy,ix].u_effective[halo:nj-halo,halo:ni+1-halo]
-                Vs[jst:jed+1,ist:ied], Ve[jst:jed+1,ist:ied] = boxes[iy,ix].v_simple[halo:nj+1-halo,halo:ni-halo], boxes[iy,ix].v_effective[halo:nj+1-halo,halo:ni-halo]
-                Cr[jst:jed,ist:ied], Ur[jst:jed,ist:ied+1], Vr[jst:jed+1,ist:ied] = boxes[iy,ix].max_rfl, boxes[iy,ix].max_rfl, boxes[iy,ix].max_rfl
+
+                Cs[jst:jed, ist:ied] = boxes[iy,ix].c_simple[halo:nj-halo, halo:ni-halo]
+                Ce[jst:jed, ist:ied] = boxes[iy,ix].c_effective[halo:nj-halo, halo:ni-halo]
+                Cr[jst:jed, ist:ied] = boxes[iy,ix].max_rfl
+
+                Us[jst:jed, ist:ied+1] = boxes[iy,ix].u_simple[halo:nj-halo, halo:ni+1-halo]
+                Ue[jst:jed, ist:ied+1] = boxes[iy,ix].u_effective[halo:nj-halo, halo:ni+1-halo]
+                Ur[jst:jed, ist:ied+1] = boxes[iy,ix].max_rfl
+
+                Vs[jst:jed+1, ist:ied] = boxes[iy,ix].v_simple[halo:nj+1-halo, halo:ni-halo]
+                Ve[jst:jed+1, ist:ied] = boxes[iy,ix].v_effective[halo:nj+1-halo, halo:ni-halo]
+                Vr[jst:jed+1, ist:ied] = boxes[iy,ix].max_rfl
 
                 # Shared boundaries
                 if ix<npi-1:
-                    Us[jst:jed,ied], Ue[jst:jed,ied], Ur[jst:jed,ied] = boundary_edge(boxes[iy,ix], boxes[iy,ix+1], halo=halo, axis=1, ignore_inconsistency=ignore_inconsistency)
+                    Us[jst:jed, ied], Ue[jst:jed, ied], Ur[jst:jed, ied] \
+                        = subdomain_edge(boxes[iy,ix], boxes[iy,ix+1], halo=halo, axis=1,
+                                         except_level=except_level, verbose=verbose)
                 if iy<npj-1:
-                    Vs[jed,ist:ied], Ve[jed,ist:ied], Vr[jed,ist:ied] = boundary_edge(boxes[iy,ix], boxes[iy+1,ix], halo=halo, axis=0, ignore_inconsistency=ignore_inconsistency)
+                    Vs[jed, ist:ied], Ve[jed, ist:ied], Vr[jed, ist:ied] \
+                        = subdomain_edge(boxes[iy,ix], boxes[iy+1,ix], halo=halo, axis=0,
+                                         except_level=except_level, verbose=verbose)
 
         # Cyclic/folding boundaries
         if self.reentrant_x:
             for iy in range(npj):
                 (jst, jed, _, _), halo = self.pelayout[iy,-1]
-                Us[jst:jed,-1], Ue[jst:jed,-1], Ur[jst:jed,-1] = boundary_edge(boxes[iy,-1], boxes[iy,0], halo=halo, axis=1, ignore_inconsistency=ignore_inconsistency)
-                Us[jst:jed,0], Ue[jst:jed,0], Ur[jst:jed,0] = Us[jst:jed,-1], Ue[jst:jed,-1], Ur[jst:jed,-1]
+                Us[jst:jed, -1], Ue[jst:jed, -1], Ur[jst:jed, -1] \
+                    = subdomain_edge(boxes[iy,-1], boxes[iy,0], halo=halo, axis=1,
+                                     except_level=except_level, verbose=verbose)
+                Us[jst:jed, 0], Ue[jst:jed, 0], Ur[jst:jed, 0] \
+                    = Us[jst:jed, -1], Ue[jst:jed, -1], Ur[jst:jed, -1]
         if self.bipolar_n:
             for ix in range(npi//2):
                 (_, _, ist, ied), halo = self.pelayout[-1,ix]
-                Vs[-1,ist:ied], Ve[-1,ist:ied], Vr[-1,ist:ied] = boundary_edge(boxes[-1,ix], boxes[-1,npi-ix-1], halo=halo, axis=0, fold_north=True, ignore_inconsistency=ignore_inconsistency)
+                Vs[-1,ist:ied], Ve[-1,ist:ied], Vr[-1,ist:ied] \
+                    = subdomain_edge(boxes[-1,ix], boxes[-1,npi-ix-1], halo=halo, axis=0, fold_north=True,
+                                     except_level=except_level, verbose=verbose)
                 (_, _, istf, iedf), _ = self.pelayout[-1,npi-ix-1]
-                Vs[-1,istf:iedf], Ve[-1,istf:iedf], Vr[-1,istf:iedf] = Vs[-1,ist:ied][0,::-1], Ve[-1,ist:ied][0,::-1], Vr[-1,ist:ied][::-1]
+                Vs[-1,istf:iedf], Ve[-1,istf:iedf], Vr[-1,istf:iedf] \
+                    = Vs[-1,ist:ied][0,::-1], Ve[-1,ist:ied][0,::-1], Vr[-1,ist:ied][::-1]
             if npi%2!=0:
                 (_, _, ist, ied), halo = self.pelayout[-1,npi//2]
                 thisbox = boxes[-1,npi//2]
                 nj, ni = thisbox.shape
                 nhf = (ied-ist)//2
-                Vs[-1,ist:ist+nhf] = compare_edges(thisbox.v_simple[nj-halo, halo:halo+nhf], thisbox.v_simple[nj-halo,halo+nhf:ni-halo][0,::-1],
-                                                   thisbox, thisbox, 'simple', ignore_inconsistency=ignore_inconsistency)
-                Ve[-1,ist:ist+nhf] = compare_edges(thisbox.v_simple[nj-halo, halo:halo+nhf], thisbox.v_simple[nj-halo,halo+nhf:ni-halo][0,::-1],
-                                                   thisbox, thisbox, 'effective', ignore_inconsistency=ignore_inconsistency)
+                msg = '{}'.format(thisbox.domain_id)
+                Vs[-1,ist:ist+nhf] = domain.compare_edges(thisbox.v_simple[nj-halo, halo:halo+nhf],
+                                                          thisbox.v_simple[nj-halo,halo+nhf:ni-halo][0,::-1],
+                                                          thisbox.max_rfl, thisbox.max_rfl,
+                                                          except_level=except_level, verbose=verbose, message=msg)
+                Ve[-1,ist:ist+nhf] = domain.compare_edges(thisbox.v_effective[nj-halo, halo:halo+nhf],
+                                                          thisbox.v_effective[nj-halo,halo+nhf:ni-halo][0,::-1],
+                                                          thisbox.max_rfl, thisbox.max_rfl,
+                                                          except_level=except_level, verbose=verbose, message=msg)
                 Vs[-1,ist+nhf:ied] = Vs[-1,ist:ist+nhf][0,::-1]
                 Ve[-1,ist+nhf:ied] = Ve[-1,ist:ist+nhf][0,::-1]
                 Vr[-1,ist:ied] = thisbox.max_rfl
 
-    def regrid_topography(self, pelayout=None, tgt_halo=0, nprocs=1, src=None, src_halo=0, refine_loop_args={}, topo_gen_args={},
-                          hitmap=None, verbose=False):
+    def stitch_mask_domain(self, mask_domain, mask, halo, except_level=2, verbose=False):
+        """
+        The assumption is the masked domain has the higher refine level
+        """
+        jst, jed, ist, ied = mask
+
+        # Cell center sizes
+        nj, ni = jed-jst+2*halo, ied-ist+2*halo
+
+        # aliasing
+        Cs, Us, Vs = self.c_simple, self.u_simple, self.v_simple
+        Ce, Ue, Ve = self.c_effective, self.u_effective, self.v_effective
+        Cr, Ur, Vr = self.c_refinelevel, self.u_refinelevel, self.v_refinelevel
+
+        mCs, mUs, mVs = mask_domain.c_simple, mask_domain.u_simple, mask_domain.v_simple
+        mCe, mUe, mVe = mask_domain.c_effective, mask_domain.u_effective, mask_domain.v_effective
+        mCr, mUr, mVr = mask_domain.c_refinelevel, mask_domain.u_refinelevel, mask_domain.v_refinelevel
+
+        # middle part
+        Cs[jst:jed, ist:ied] = mCs[halo:nj-halo, halo:ni-halo]
+        Ce[jst:jed, ist:ied] = mCe[halo:nj-halo, halo:ni-halo]
+        Cr[jst:jed, ist:ied] = mCr[halo:nj-halo, halo:ni-halo]
+
+        Us[jst:jed, ist+1:ied] = mUs[halo:nj-halo, halo+1:ni-halo]
+        Ue[jst:jed, ist+1:ied] = mUe[halo:nj-halo, halo+1:ni-halo]
+        Ur[jst:jed, ist+1:ied] = mUr[halo:nj-halo, halo+1:ni-halo]
+
+        Vs[jst+1:jed, ist:ied] = mVs[halo+1:nj-halo, halo:ni-halo]
+        Ve[jst+1:jed, ist:ied] = mVe[halo+1:nj-halo, halo:ni-halo]
+        Vr[jst+1:jed, ist:ied] = mVr[halo+1:nj-halo, halo:ni-halo]
+
+        # shared edges
+        for jj in range(jst,jed):
+            msg = 'np mask ({:d},{:d}) (simple)'.format(jj,ist)
+            Us[jj,ist] = domain.compare_edges(Us[jj,ist], mUs[halo+jj-jst,halo], Ur[jj,ist], mUr[halo+jj-jst,halo],
+                                              except_level=except_level, verbose=verbose, message=msg)
+            msg = 'np mask ({:d},{:d}) (effective)'.format(jj,ist)
+            Ue[jj,ist] = domain.compare_edges(Ue[jj,ist], mUe[halo+jj-jst,halo], Ur[jj,ist], mUr[halo+jj-jst,halo],
+                                              except_level=except_level, verbose=verbose, message=msg)
+            msg = 'np mask ({:d},{:d}) (simple)'.format(jj,ied)
+            Us[jj,ied] = domain.compare_edges(Us[jj,ied], mUs[halo+jj-jst,ni-halo], Ur[jj,ied], mUr[halo+jj-jst,ni-halo],
+                                              except_level=except_level, verbose=verbose, message=msg)
+            msg = 'np mask ({:d},{:d}) (effective)'.format(jj,ied)
+            Ue[jj,ied] = domain.compare_edges(Ue[jj,ied], mUe[halo+jj-jst,ni-halo], Ur[jj,ied], mUr[halo+jj-jst,ni-halo],
+                                              except_level=except_level, verbose=verbose, message=msg)
+            Ur[jj,ist] = max(Ur[jj,ist], mUr[halo+jj-jst,halo])
+            Ur[jj,ied] = max(Ur[jj,ied], mUr[halo+jj-jst,ni-halo])
+
+        for ii in range(ist,ied):
+            msg = 'np mask ({:d},{:d}) (simple)'.format(jst,ii)
+            Vs[jst,ii] = domain.compare_edges(Vs[jst,ii], mVs[halo,halo+ii-ist], Vr[jst,ii], mVr[halo,halo+ii-ist],
+                                              except_level=except_level, verbose=verbose, message=msg)
+            msg = 'np mask ({:d},{:d}) (effective)'.format(jst,ii)
+            Ve[jst,ii] = domain.compare_edges(Ve[jst,ii], mVe[halo,halo+ii-ist], Vr[jst,ii], mVr[halo,halo+ii-ist],
+                                              except_level=except_level, verbose=verbose, message=msg)
+            msg = 'np mask ({:d},{:d}) (simple)'.format(jed,ii)
+            Vs[jed,ii] = domain.compare_edges(Vs[jed,ii], mVs[nj-halo,halo+ii-ist], Vr[jed,ii], mVr[nj-halo,halo+ii-ist],
+                                              except_level=except_level, verbose=verbose, message=msg)
+            msg = 'np mask ({:d},{:d}) (effective)'.format(jed,ii)
+            Ve[jed,ii] = domain.compare_edges(Ve[jed,ii], mVe[nj-halo,halo+ii-ist], Vr[jed,ii], mVr[nj-halo,halo+ii-ist],
+                                              except_level=except_level, verbose=verbose, message=msg)
+            Vr[jst,ii] = max(Vr[jst,ii], mVr[halo,halo+ii-ist])
+            Vr[jed,ii] = max(Vr[jed,ii], mVr[nj-halo,halo+ii-ist])
+
+    def stitch_mask_fold_north(self, except_level=2, verbose=False):
+        if not self.bipolar_n:
+            return
+        _, _, istw, iedw = self.north_mask[0]
+        _, _, iste, iede = self.north_mask[1]
+
+        Vs, Ve, Vr = self.v_simple, self.v_effective, self.v_refinelevel
+
+        for iiw, iie in zip(numpy.arange(istw,iedw,1), numpy.arange(iede-1,iste-1,-1)):
+            msg = 'northern boundary ({:d},{:d}) (simple)'.format(iiw,iie)
+            Vs[-1,iiw] = domain.compare_edges(Vs[-1,iiw], Vs[-1,iie], Vr[-1,iiw], Vr[-1,iie],
+                                              except_level=except_level, verbose=verbose, message=msg)
+            msg = 'northern boundary ({:d},{:d}) (effective)'.format(iiw,iie)
+            Ve[-1,iiw] = domain.compare_edges(Ve[-1,iiw], Ve[-1,iie], Vr[-1,iiw], Vr[-1,iie],
+                                              except_level=except_level, verbose=verbose, message=msg)
+            Vr[-1,iiw] = max(Vr[-1,iiw], Vr[-1,iie])
+            Vs[-1,iie], Ve[-1,iie], Vr[-1,iie] = Vs[-1,iiw], Ve[-1,iiw], Vr[-1,iiw]
+
+    def regrid_topography(self, pelayout=None, tgt_halo=0, nprocs=1, src=None, src_halo=0,
+                          refine_loop_args={}, topo_gen_args={}, hitmap=None, bnd_tol_level=1, verbose=False):
         """"A wrapper for getting elevation from a domain"""
         subdomains = self.create_subdomains(pelayout, tgt_halo=tgt_halo, src=src, src_halo=src_halo,
                                             refine_loop_args=refine_loop_args, verbose=verbose)
@@ -485,70 +703,11 @@ class domain(ThinWalls.ThinWalls):
             twlist, hitlist = zip(*twlist)
             hitmap.stitch_hits(hitlist)
 
-        self.stitch_subdomains(twlist)
+        self.stitch_subdomains(twlist, except_level=bnd_tol_level, verbose=verbose)
 
-    def create_mask_domain(self, mask, tgt_halo=0, pole_radius=0.25):
-        """Creates a domain for the masked north pole region
-
-        Parameters
-        ----------
-        pole_radius : float, optional
-            Polar radius in the new mask domain
-        max_mb : float, optional
-            Updated memory limit superceding the parent domain property
-        fixed_refine_level : integer, optional
-            Overrides the parent class
-        Returns
-        ----------
-        Output : domain class
-        """
-        jst, jed, ist, ied = mask
-        mask_halo = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
-        lon = domain.slice(self.lon, box=mask_halo, cyclic_zonal=False, fold_north=True)
-        lat = domain.slice(self.lat, box=mask_halo, cyclic_zonal=False, fold_north=True)
-
-        nj, ni = mask_halo[1]-mask_halo[0]+1, mask_halo[3]-mask_halo[2]+1
-        if self.bipolar_n and jed==self.nj:
-            iq1, iq3 = self.ni//4, self.ni//4*3
-            if ist<=iq1: lon[nj-tgt_halo:nj, -ni+tgt_halo-ist:iq1-ist+tgt_halo+1] -= 360.0
-            if ied>=iq3: lon[nj-tgt_halo:nj, -ni+iq3-ist+tgt_halo:self.ni-ist+tgt_halo+1] += 360.0
-
-        return domain(lon=lon, lat=lat, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius)
-
-    def stitch_mask_domain(self, mask, maskdomain):
-        """
-        The assumption is the masked domain has the higher refine level
-        """
-        jst, jed, ist, ied = mask
-        # Cs, Us, Vs = self.c_simple, self.u_simple, self.v_simple
-        # Ce, Ue, Ve = self.c_effective, self.u_effective, self.v_effective
-        # Cr, Ur, Vr = self.c_refinelevel, self.u_refinelevel, self.v_refinelevel
-
-        # Cs[jst:jed,ist:ied], Us[jst:jed,ist+1:ied], Vs[jst+1:jed,ist:ied] = maskdomain.c_simple[:,:], maskdomain.u_simple[:,1:-1], maskdomain.v_simple[1:-1,:]
-        # Ce[jst:jed,ist:ied], Ue[jst:jed,ist+1:ied], Ve[jst+1:jed,ist:ied] = maskdomain.c_effective[:,:], maskdomain.u_effective[:,1:-1], maskdomain.v_effective[1:-1,:]
-        # Cr[jst:jed,ist:ied], Ur[jst:jed,ist+1:ied], Vr[jst+1:jed,ist:ied] = maskdomain.c_refinelevel[:,:], maskdomain.u_refinelevel[:,1:-1], maskdomain.v_refinelevel[1:-1,:]
-
-        # Vs[jed+1,ist:ied] = maskdomain.v_simple[-1,:]
-        # Ve[jed+1,ist:ied] = maskdomain.v_effective[-1,:]
-        # Vr[jed+1,ist:ied] = maskdomain.v_refinelevel[-1,:]
-
-        # Vs[jst,ist:ied] = maskdomain.v_simple[0,:]
-        # Ve[jst,ist:ied] = maskdomain.v_effective[0,:]
-        # Vr[jst,ist:ied] = max(maskdomain.max_rfl, Vr[jst,ist:ied])
-
-        self.c_simple[jst:jed,ist:ied] = maskdomain.c_simple[:,:]
-        self.u_simple[jst:jed,ist:ied+1] = maskdomain.u_simple[:,:]
-        self.v_simple[jst:jed+1,ist:ied] = maskdomain.v_simple[:,:]
-
-        self.c_effective[jst:jed,ist:ied] = maskdomain.c_effective[:,:]
-        self.u_effective[jst:jed,ist:ied+1] = maskdomain.u_effective[:,:]
-        self.v_effective[jst:jed+1,ist:ied] = maskdomain.v_effective[:,:]
-
-        self.c_refinelevel[jst:jed,ist:ied] = maskdomain.c_refinelevel
-        self.u_refinelevel[jst:jed,ist:ied+1] = maskdomain.u_refinelevel
-        self.v_refinelevel[jst:jed+1,ist:ied] = maskdomain.v_refinelevel
-
-    def regrid_topography_masked(self, lat_start=None, lat_end=89.75, lat_step=0.5, pelayout=None, tgt_halo=0, nprocs=1, src=None, refine_loop_args={}, topo_gen_args={}, hitmap=None, verbose=True):
+    def regrid_topography_masked(self, lat_start=None, lat_end=89.75, lat_step=0.5,
+                                 pelayout=None, tgt_halo=0, nprocs=1, src=None,
+                                 refine_loop_args={}, topo_gen_args={}, hitmap=None, bnd_tol_level=1, verbose=True):
 
         # Backup the initial mask domain indices
         north_mask_org = self.north_mask
@@ -562,8 +721,10 @@ class domain(ThinWalls.ThinWalls):
                 mask_domain = self.create_mask_domain(mask=mask, tgt_halo=tgt_halo, pole_radius=90.0-latc)
                 refine_loop_args['singularity_radius'] = mask_domain.pole_radius
                 mask_domain.regrid_topography(pelayout=pelayout, tgt_halo=tgt_halo, nprocs=nprocs, src=src,
-                                              refine_loop_args=refine_loop_args, topo_gen_args=topo_gen_args, hitmap=hitmap)
-                self.stitch_mask_domain(mask, mask_domain)
+                                              refine_loop_args=refine_loop_args, topo_gen_args=topo_gen_args, hitmap=hitmap,
+                                              bnd_tol_level=bnd_tol_level)
+                self.stitch_mask_domain(mask_domain, mask, tgt_halo, except_level=bnd_tol_level)
+            self.stitch_mask_fold_north(except_level=bnd_tol_level)
             self._find_north_pole_rectangles(north_pole_cutoff_lat=latc, num_north_pole=2)
             latc += lat_step
         self.north_mask = north_mask_org
@@ -607,9 +768,13 @@ class domain(ThinWalls.ThinWalls):
     @staticmethod
     def slice(var, box, position='corner', fold_north=True, cyclic_zonal=True, fold_south=False):
         """Slice a 2D field with extend indices that cover halos
-        For halos beyond the boundaries, cyclic boundary is assumed at the western and eastern boundaries, and folding boundary
-        is assumed at the northern boundary. Halos that pass beyond the southern boundary is ignored.
-        The method is operated over the "symmetric" grid strutures, i.e. corner fields are one-point larger in each direction.
+        Treatment of halos beyond the boundaries:
+        If not specified, all boundaries are assumed to be reflective.
+            For example, to extend 2 point from | 0, 1, 2 ... => 1, 0, | 0, 1, 2...
+        By default, cyclic boundary is assumed at the western and eastern boundaries,
+        and folding boundary is assumed at the northern boundary. The southern boundary is ignored.
+        This method is operated over the "symmetric" grid strutures, i.e. corner fields are
+        one-point larger in each direction.
 
         Parameters
         ----------
@@ -619,6 +784,15 @@ class domain(ThinWalls.ThinWalls):
             Four-element tuple (jst, jed, ist, ied). The indices are for cell centers.
         position : string, optional
             Grid position of the input field. Can be either 'center', 'corner', 'u', and 'v'. Default is 'corner'
+        fold_north : bool, optional
+            If true, folding (in the middle) boundary is assumed at the northern end (bi-polar cap).
+            Default is True.
+        cyclic_zonal : bool, optional
+            If true, cyclic boundary is assumed in the zonal direction.
+            Default is True
+        fold_north : bool, optional
+            Placeholder for a folding boundary at the southern end. Does not work if True.
+            Default is False.
 
         Returns
         ----------
@@ -695,6 +869,25 @@ class domain(ThinWalls.ThinWalls):
         # print(no_sw.shape, no_so.shape, no_se.shape)
         return numpy.r_[numpy.c_[no_sw, no_so, no_se], numpy.c_[cyc_w, c, cyc_e], numpy.c_[fd_nw, fd_no, fd_ne]]
 
+    def offset_halo_lon(self, lon, box_data, halo):
+        """Offset longitude (corners) for cyclic N-W boundary and folding northern boundary."""
+        jst, jed, ist, ied = box_data
+        nj, ni = lon.shape
+        assert nj==jed-jst+halo*2+1 and ni==ied-ist+halo*2+1, 'offset_halo_lon: indices do not match with lon.'
+        lon_out = lon.copy()
+        if self.reentrant_x:
+            if self.bipolar_n: # no offset for the northeast and northwest corner blocks.
+                j_end = self.nj-(jst-halo)+1
+            else:
+                j_end = None
+            lon_out[:j_end, :-ni-(ist-halo)] -= 360.0
+            lon_out[:j_end, self.ni-(ist-halo)+1:] += 360.0
+        if self.bipolar_n:
+            iq1, iq3 = self.ni//4, self.ni//4*3
+            lon_out[self.nj-(jst-halo)+1:, -ni-(ist-halo):max(iq1-(ist-halo),0)] -= 360.0
+            lon_out[self.nj-(jst-halo)+1:, max(iq3-(ist-halo)+1,0):self.ni-(ist-halo)+1] += 360.0
+        return lon_out
+
 def topo_gen(grid, do_mean_only=False, do_effective=True, save_hits=True, verbose=True):
     """Generate topography
 
@@ -707,7 +900,9 @@ def topo_gen(grid, do_mean_only=False, do_effective=True, save_hits=True, verbos
     tw : ThinWalls.ThinWalls object
     """
 
-    if do_mean_only: do_effective = False
+    if do_mean_only:
+        do_effective = False
+    use_center = grid.refine_loop_args['use_center'] and do_mean_only # reserve this for mean only for now
     if verbose: print(grid.domain_id)
 
     # Step 1: Refine grid and save the finest grid
@@ -715,17 +910,21 @@ def topo_gen(grid, do_mean_only=False, do_effective=True, save_hits=True, verbos
     nrfl = finest_grid.rfl
 
     if save_hits:
-        hits = hitmap(lon=grid.lon_src, lat=grid.lat_src, from_cell_center=True)
-        hits[:] = finest_grid.source_hits(grid.lon_src, grid.lat_src, singularity_radius=0.0)
+        hits = hitmap(lon=grid.lon_src.arrayb, lat=grid.lat_src.arrayb, from_cell_center=False)
+        hits[:] = finest_grid.source_hits(grid.lon_src.arrayb, grid.lat_src.arrayb,
+                                          use_center=use_center, singularity_radius=0.0)
         hits.box = grid.box_src
 
     # Step 2: Create a ThinWalls object on the finest grid and coarsen back
     tw = ThinWalls.ThinWalls(lon=finest_grid.lon, lat=finest_grid.lat, rfl=finest_grid.rfl)
       # Spawn elevation data to the finest grid
-    tw.project_source_data_onto_target_mesh(grid.lon_src, grid.lat_src, grid.elev_src)
+    tw.project_source_data_onto_target_mesh(grid.lon_src, grid.lat_src, grid.elev_src, use_center=use_center)
 
       # Interpolate elevation to cell centers and edges (simple)
-    tw.set_center_from_corner()
+    if use_center:
+        tw.set_cell_mean(tw.height)
+    else:
+        tw.set_center_from_corner()
 
     if not do_mean_only:
         tw.set_edge_from_corner()
@@ -896,7 +1095,7 @@ def write_hitmap(hitmap, filename, format='NETCDF3_64BIT_OFFSET', history='', de
     ncout.close()
 
 def main(argv):
-    parser = argparse.ArgumentParser(description='Objective topography regridding\n' '\nThe target grid is treated separatedly in tiles',
+    parser = argparse.ArgumentParser(description='Objective topography regridding',
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument("-v", "--verbose", action='store_true')
     parser.add_argument("--verbosity", default=0, help='Granularity of log output')
@@ -909,12 +1108,13 @@ def main(argv):
                             help='If specified, the target grid file is not on a supergrid. Currently not supported')
     parser_tgt.add_argument("--no_mono_lon", action='store_true',
                             help='If specified, no 360-degree shift will be made to guarantee the last row of lon is monotonic.')
-    parser_tgt.add_argument("--tgt_halo", default=0, type=int, help='Halo size of each target grid subdomain at both directions')
+    parser_tgt.add_argument("--tgt_halo", default=0, type=int, help='Halo size at both directions for target grid subdomain')
 
     parser_src = parser.add_argument_group('Source data')
     parser_src.add_argument("--source", default='', help='File name of the source data')
     parser_src.add_argument("--lon_src", default='lon', help='Field name in source file for longitude')
     parser_src.add_argument("--lat_src", default='lat', help='Field name in source file for latitude')
+    parser_src.add_argument("--src_halo", default=0, type=int, help='Halo size of at both directions for subsetting source data')
     parser_src.add_argument("--elev", default='elevation', help='Field name in source file for elevation')
     parser_src.add_argument("--remove_src_repeat_lon", action='store_true',
                             help='If specified, the repeating longitude in the last column is removed. Elevation along that longitude will be the mean.')
@@ -930,6 +1130,7 @@ def main(argv):
     parser_pe.add_argument("--pe", nargs='+', type=int, help='Domain decomposition layout')
     parser_pe.add_argument("--pe_p", nargs='+', type=int, help='Domain decomposition layout for the North Pole rectangles')
     parser_pe.add_argument("--max_mb", default=10240, type=float, help='Memory limit per processor')
+    parser_pe.add_argument("--bnd_tol_level", default=2, type=int, help='Shared boundary treatment strategy')
 
     parser_rgd = parser.add_argument_group('Regrid options')
     parser_rgd.add_argument("--use_center", action='store_true', help='Use cell centers for nearest neighbor.')
@@ -1011,11 +1212,16 @@ def main(argv):
     if args.save_hits: hm = hitmap(lon=lon_src, lat=lat_src, from_cell_center=True)
 
     # Regrid
-    dm.regrid_topography(pelayout=pe, tgt_halo=args.tgt_halo, nprocs=nprocs, src=src, src_halo=0,
-                         refine_loop_args=refine_options, topo_gen_args=topo_gen_args, hitmap=hm, verbose=args.verbose)
-    # Donut update near the (geographic) north pole
-    dm.regrid_topography_masked(lat_end=np_lat_end, lat_step=np_lat_step, pelayout=pe_p, nprocs=nprocs, src=src,
-                                refine_loop_args=refine_options, topo_gen_args=topo_gen_args, hitmap=hm, verbose=args.verbose)
+    bnd_tol_level = args.bnd_tol_level
+    if args.do_mean_only:
+        bnd_tol_level = 0
+    dm.regrid_topography(pelayout=pe, tgt_halo=args.tgt_halo, nprocs=nprocs, src=src, src_halo=args.src_halo,
+                         refine_loop_args=refine_options, topo_gen_args=topo_gen_args, hitmap=hm,
+                         bnd_tol_level=bnd_tol_level, verbose=args.verbose)
+    if args.fixed_refine_level<0:
+        # Donut update near the (geographic) north pole
+        dm.regrid_topography_masked(lat_end=np_lat_end, lat_step=np_lat_step, pelayout=pe_p, nprocs=nprocs, src=src,
+                                    refine_loop_args=refine_options, topo_gen_args=topo_gen_args, hitmap=hm, verbose=args.verbose)
     # Output to a netCDF file
     write_output(dm, args.output, do_mean_only=args.do_mean_only, format='NETCDF3_64BIT_OFFSET', history=' '.join(argv))
     if args.save_hits: write_hitmap(hm, 'hitmap.nc')
