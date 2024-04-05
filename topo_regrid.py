@@ -4,15 +4,15 @@ import numpy
 import multiprocessing
 import functools
 import netCDF4
-sys.path.insert(0,'/Users/hewang/lib/thin-wall-topography/python')
-# sys.path.insert(0,'/Users/hewang/lib/porous-topography-generator/thin-wall-topography/python')
+# sys.path.insert(0,'/Users/hewang/lib/thin-wall-topography/python')
+sys.path.insert(0,'/Users/hewang/lib/porous-topography-generator/thin-wall-topography/python')
 import GMesh
 import ThinWalls
 # import importlib
 # GMesh = importlib.import_module('thin-wall-topography.python.GMesh')
 # ThinWalls = importlib.import_module('thin-wall-topography.python.ThinWalls')
 
-class source_topo(object):
+class SourceData(object):
     """A container for source coords and data"""
     def __init__(self, lon=None, lat=None, elev=None, remove_repeat=False):
         assert len(lon.shape)==1, "Longitude is not 1D."
@@ -25,7 +25,7 @@ class source_topo(object):
     def _remove_repeat(self):
         pass
 
-class hitmap(GMesh.GMesh):
+class HitMap(GMesh.GMesh):
     """A container for hits on the source grid
     """
     def __init__(self, *args, **kwargs):
@@ -62,14 +62,14 @@ class hitmap(GMesh.GMesh):
         """Plots hit map"""
         return axis.pcolormesh( self.lon, self.lat, self[:,:], **kwargs )
 
-class refine_wrapper(GMesh.GMesh):
+class RefineWrapper(GMesh.GMesh):
     """A wrapper for grid refinement (of a subdomain)
 
     Object from this class encapsules source grid, elevation and arguments for refine_loop method.
     It can be generated as a subdomain of a full domain grid.
     """
-    def __init__(self, lon=None, lat=None, domain_id=(0,0), move_north_pole_lon=False, src=None, fit_src_coords=False, src_halo=0,
-                 mask_recs=[], refine_loop_args={}):
+    def __init__(self, lon=None, lat=None, domain_id=(0,0), move_north_pole_lon=False,
+                 src=None, fit_src_lon=False, fit_src_lat=False, src_halo=0, mask_recs=[], refine_loop_args={}):
         """
         Parameters
         ----------
@@ -84,7 +84,7 @@ class refine_wrapper(GMesh.GMesh):
             Integerized source data coordinates.
         elev_src : array of float, optional
             Source elevation field.
-        fit_src_coords : bool, optional
+        fit_src_lon, fit_src_lat : bool, optional
             If true, source grid lon_src and lat_src are tailored to encompass target grid, with a halo decided by src_halo.
             elev_src is also trimmed accordingly. Default is False.
         src_halo : integer, optional
@@ -112,20 +112,23 @@ class refine_wrapper(GMesh.GMesh):
 
         self.north_masks = mask_recs
         self.refine_loop_args = refine_loop_args
-        # self._fit_src_coords(src.lon, src.lat, src.elev, do_fit=fit_src_coords, halo=src_halo)
-        self._fit_src_coords_test(src.lon, src.lat, src.elev, do_fit=fit_src_coords, halo=src_halo)
+        self._fit_src_coords(src.lon, src.lat, src.elev, do_fit_lon=fit_src_lon, do_fit_lat=fit_src_lat, halo=src_halo)
 
     def __str__(self):
-        # dellon, dellat = (self.lon_src[1]-self.lon_src[0]), (self.lat_src[1]-self.lat_src[0])
-        # dellon, dellat = self.lon_src.dr, (self.lat_src[1]-self.lat_src[0])
         disp = [str(type(self)),
-                "Sub-domain identifier: (%2i, %2i)"%self.domain_id,
-                "Target grid size (nj ni): (%9i, %9i)"%(self.nj, self.ni),
-                # "Source grid size (nj ni): (%9i, %9i), indices: %s"%(self.lat_src.size, self.lon_src.size, self.box_src),
-                "Target grid range (lat lon): (%10.6f, %10.6f)  (%10.6f, %10.6f)"%(self.lat.min(), self.lat.max(),
-                                                                                   numpy.mod(self.lon.min(), 360), numpy.mod(self.lon.max(), 360)),
-                # "Source grid range (lat lon): (%10.6f, %10.6f)  (%10.6f, %10.6f)"%(self.lat_src[0]-0.5*dellat, self.lat_src[-1]+0.5*dellat,
-                                                                                #    numpy.mod(self.lon_src[0]-0.5*dellon, 360), numpy.mod(self.lon_src[-1]+0.5*dellon, 360))
+                "Sub-domain identifier: {}".format(self.domain_id),
+                "Target grid size (nj ni): ({:9d}, {:9d})".format( self.nj, self.ni ),
+                "Source grid size (nj ni): ({:9d}, {:9d}), indices: {}".format( self.lat_src.size, self.lon_src.size,
+                                                                                (self.lat_src.n0, self.lat_src.n1,
+                                                                                 self.lon_src.n0, self.lon_src.n1) ),
+                ("Target grid range (lat lon): "+
+                 "({:10.6f}, {:10.6f})  ({:10.6f}, {:10.6f})").format( self.lat.min(), self.lat.max(),
+                                                                       numpy.mod(self.lon.min(), 360),
+                                                                       numpy.mod(self.lon.max(), 360) ),
+                ("Source grid range (lat lon): "+
+                 "({:10.6f}, {:10.6f})  ({:10.6f}, {:10.6f})").format( self.lat_src.bounds[0], self.lat_src.bounds[-1],
+                                                                       numpy.mod(self.lon_src.bounds[0], 360),
+                                                                       numpy.mod(self.lon_src.bounds[-1], 360) )
                ]
         if len(self.north_masks)>0:
             disp.append('North Pole rectangles: ')
@@ -144,70 +147,44 @@ class refine_wrapper(GMesh.GMesh):
                     self.lon[jjj, iii] = self.lon[jjj, iii-1]
                 except IndexError:
                     self.lon[jjj, iii] = self.lon[jjj, iii+1]
-    def _fit_src_coords_test(self, lon_src, lat_src, elev_src, do_fit=True, halo=0):
+
+    def _fit_src_coords(self, lon_src, lat_src, elev_src, do_fit_lon=True, do_fit_lat=True, halo=0):
         """Returns the four-element indices of source grid that covers the current domain."""
         sni, snj = lon_src.size, lat_src.size
         dellon, dellat = (lon_src[-1]-lon_src[0])/(sni-1), (lat_src[-1]-lat_src[0])/(snj-1)
-        if do_fit:
-
+        if do_fit_lon:
             # ist_src = (numpy.mod(numpy.floor(numpy.mod(self.lon.min()-lon_src[0]+0.5*dellon,360)/dellon)-halo+sni),sni).astype(int)
             # ied_src = (numpy.mod(numpy.floor(numpy.mod(self.lon.max()-lon_src[0]+0.5*dellon,360)/dellon)+halo+sni),sni).astype(int)+1
             ist_src = int(numpy.floor(numpy.mod(self.lon.min()-lon_src[0]+0.5*dellon,360)/dellon)-halo)
-            if ist_src<0: ist_src += sni
+            if ist_src<0:
+                ist_src += sni
             ied_src = int(numpy.floor(numpy.mod(self.lon.max()-lon_src[0]+0.5*dellon,360)/dellon)+halo)+1
-            if ied_src>sni: ied_src -= sni
+            if ied_src>sni:
+                ied_src -= sni
+            if ist_src+1==ied_src:
+                ist_src, ied_src = 0, sni # All longitudes are included.
+        else:
+            ist_src, ied_src = 0, sni
+        if do_fit_lat:
             jst_src = int(min(max(numpy.floor(0.5+(self.lat.min()-lat_src[0])/dellat-halo),0.0),snj-1))
             jed_src = int(min(max(numpy.floor(0.5+(self.lat.max()-lat_src[0])/dellat+halo),0.0),snj-1))+1
-            if ist_src+1==ied_src: ist_src, ied_src = 0, sni # All longitudes are included.
-
-            if ist_src>ied_src:
-                self.elev_src = numpy.c_[elev_src[jst_src:jed_src,ist_src:], elev_src[jst_src:jed_src,:ied_src]]
-            else:
-                self.elev_src = elev_src[jst_src:jed_src:,ist_src:ied_src]
         else:
-            jst_src, jed_src, ist_src, ied_src = 0, snj, 0, sni
-            self.elev_src = elev_src
+            jst_src, jed_src = 0, snj
 
-        self.box_src = (jst_src, jed_src, ist_src, ied_src)
+        if ist_src>ied_src:
+            self.elev_src = numpy.c_[elev_src[jst_src:jed_src,ist_src:], elev_src[jst_src:jed_src,:ied_src]]
+        else:
+            self.elev_src = elev_src[jst_src:jed_src:,ist_src:ied_src]
+
         self.lon_src = GMesh.IntCoord(lon_src[0], dellon, sni, ist_src, ied_src)
         self.lat_src = GMesh.IntCoord(lat_src[0], dellat, snj, jst_src, jed_src)
-
-    def _fit_src_coords(self, lon_src, lat_src, elev_src, do_fit=True, halo=0):
-        """Returns the four-element indices of source grid that covers the current domain."""
-        sni, snj = lon_src.size, lat_src.size
-        if do_fit:
-            dellon, dellat = (lon_src[-1]-lon_src[0])/(sni-1), (lat_src[-1]-lat_src[0])/(snj-1)
-
-            # ist_src = (numpy.mod(numpy.floor(numpy.mod(self.lon.min()-lon_src[0]+0.5*dellon,360)/dellon)-halo+sni),sni).astype(int)
-            # ied_src = (numpy.mod(numpy.floor(numpy.mod(self.lon.max()-lon_src[0]+0.5*dellon,360)/dellon)+halo+sni),sni).astype(int)+1
-            ist_src = (numpy.floor(numpy.mod(self.lon.min()-lon_src[0]+0.5*dellon,360)/dellon)-halo).astype(int)
-            if ist_src<0: ist_src += sni
-            ied_src = (numpy.floor(numpy.mod(self.lon.max()-lon_src[0]+0.5*dellon,360)/dellon)+halo).astype(int)+1
-            if ied_src>sni: ied_src -= sni
-            jst_src = min(max(numpy.floor(0.5+(self.lat.min()-lat_src[0])/dellat-halo),0.0),snj-1).astype(int)
-            jed_src = min(max(numpy.floor(0.5+(self.lat.max()-lat_src[0])/dellat+halo),0.0),snj-1).astype(int)+1
-            if ist_src+1==ied_src: ist_src, ied_src = 0, sni # All longitudes are included.
-
-            self.box_src = (jst_src, jed_src, ist_src, ied_src)
-            if ist_src>ied_src:
-                self.lon_src = numpy.r_[lon_src[ist_src:]-360.0, lon_src[:ied_src]]
-                self.elev_src = numpy.c_[elev_src[jst_src:jed_src,ist_src:], elev_src[jst_src:jed_src,:ied_src]]
-            else:
-                self.lon_src = lon_src[ist_src:ied_src]
-                self.elev_src = elev_src[jst_src:jed_src:,ist_src:ied_src]
-            self.lat_src = lat_src[jst_src:jed_src]
-        else:
-            self.box_src = (0, snj, 0, sni)
-            self.lon_src = lon_src
-            self.lat_src = lat_src
-            self.elev_src = elev_src
 
     def refine_loop(self, verbose=True):
         """A self-contained version of GMesh.refine_loop()"""
         return super().refine_loop(self.lon_src, self.lat_src, verbose=verbose, mask_res=self.north_masks,
                                    **self.refine_loop_args)
 
-class domain(ThinWalls.ThinWalls):
+class Domain(ThinWalls.ThinWalls):
     """A container for regrided topography
     """
     def __init__(self, lon=None, lat=None, reentrant_x=False, bipolar_n=False, num_north_pole=0, pole_radius=0.25):
@@ -317,7 +294,7 @@ class domain(ThinWalls.ThinWalls):
         x_sym, y_sym : boo, optional
             Whether try to use symmetric domain decomposition in x or y.
             Default is x_sym=True and y_sym=False.
-        src : source_topo object, optional
+        src : SourceData object, optional
             Source coordinates and topography
         src_halo : integer, optional
             Halo size of the source grid in either direction.
@@ -328,50 +305,45 @@ class domain(ThinWalls.ThinWalls):
         ----------
         self.pelayout : a 2D array documenting indices of each subdomain
         Out : ndarray
-            A 2D array of domain classes
+            A 2D array of RefineWrapper objects
         """
 
-        if verbose:
-            print('Domain is decomposed as ', pelayout)
         if pelayout[1]==1 and tgt_halo>0:
             print('WARNING: only 1 subdomain in i-direction, which may not work with bi-polar cap.')
         if (not x_sym) and self.bipolar_n:
             print(('WARNING: domain decomposition is not guaranteed to be symmetric in x direction, ',
                    'which may not work with bi-polar cap.'))
 
-        j_domain = domain.decompose_domain(self.nj, pelayout[0], symmetric=y_sym)
-        i_domain = domain.decompose_domain(self.ni, pelayout[1], symmetric=x_sym)
+        j_domain = Domain.decompose_domain(self.nj, pelayout[0], symmetric=y_sym)
+        i_domain = Domain.decompose_domain(self.ni, pelayout[1], symmetric=x_sym)
+        if verbose:
+            print('Domain is decomposed to {:}. Halo size = {:d}.'.format(pelayout, tgt_halo))
+            print('  i: ', i_domain)
+            print('  j: ', j_domain)
+            print('\n')
 
         chunks = numpy.empty((j_domain.size, i_domain.size), dtype=object)
         self.pelayout = numpy.empty((j_domain.size, i_domain.size), dtype=object)
         for pe_j, (jst, jed) in enumerate(j_domain):
             for pe_i, (ist, ied) in enumerate(i_domain):
                 self.pelayout[pe_j, pe_i] = ((jst, jed, ist, ied), tgt_halo) # indices for cell centers
-                box_data = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
-                lon = domain.slice(self.lon, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.bipolar_n)
-                lat = domain.slice(self.lat, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.bipolar_n)
 
+                box_data = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
+                lon = Domain.slice(self.lon, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.bipolar_n)
+                lat = Domain.slice(self.lat, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.bipolar_n)
                 lon = self.offset_halo_lon(lon, (jst, jed, ist, ied), tgt_halo)
-                # # Offset longitude. This is rather ad hoc for cyclic N-W boundary and folding northern boundary.
-                # nj, ni = box_data[1]-box_data[0]+1, box_data[3]-box_data[2]+1
-                # lon = lon.copy()
-                # if self.reentrant_x:
-                #     if self.bipolar_n:
-                #         lon[:self.nj-jst+tgt_halo+1, :-ni+tgt_halo-ist] -= 360.0
-                #         lon[:self.nj-jst+tgt_halo+1, self.ni-ist+tgt_halo+1:] += 360.0
-                #     else:
-                #         lon[:, :-ni+tgt_halo-ist] -= 360.0
-                #         lon[:, self.ni-ist+tgt_halo+1:] += 360.0
-                # if self.bipolar_n and jed==self.nj:
-                #     iq1, iq3 = self.ni//4, self.ni//4*3
-                #     if ist<=iq1: lon[nj-tgt_halo:nj, -ni+tgt_halo-ist:iq1-ist+tgt_halo+1] -= 360.0
-                #     if ied>=iq3: lon[nj-tgt_halo:nj, -ni+iq3-ist+tgt_halo:self.ni-ist+tgt_halo+1] += 360.0
 
                 masks = self.find_local_masks((jst, jed, ist, ied), tgt_halo)
-                chunks[pe_j, pe_i] = refine_wrapper(lon=lon, lat=lat, domain_id=(pe_j, pe_i),
-                                                    src=src, fit_src_coords=True, src_halo=src_halo,
-                                                    mask_recs=masks, refine_loop_args=refine_loop_args)
-                if verbose: print(chunks[pe_j, pe_i])
+
+                fit_src_lon = True
+                if jed==self.nj and tgt_halo>0:
+                    fit_src_lon=False
+                fit_src_lat = True
+                chunks[pe_j, pe_i] = RefineWrapper(lon=lon, lat=lat, domain_id=(pe_j, pe_i),
+                                                   src=src, fit_src_lon=fit_src_lon, fit_src_lat=fit_src_lat, src_halo=src_halo,
+                                                   mask_recs=masks, refine_loop_args=refine_loop_args)
+                if verbose:
+                    print(chunks[pe_j, pe_i], '\n')
         return chunks
 
     def create_mask_domain(self, mask, tgt_halo=0, pole_radius=0.25):
@@ -387,22 +359,16 @@ class domain(ThinWalls.ThinWalls):
             Polar radius in the new mask domain
         Returns
         ----------
-        Output : domain class
+        Output : Domain object
         """
         jst, jed, ist, ied = mask
         mask_halo = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
-        lon = domain.slice(self.lon, box=mask_halo, cyclic_zonal=False, fold_north=True)
-        lat = domain.slice(self.lat, box=mask_halo, cyclic_zonal=False, fold_north=True)
+        lon = Domain.slice(self.lon, box=mask_halo, cyclic_zonal=False, fold_north=True)
+        lat = Domain.slice(self.lat, box=mask_halo, cyclic_zonal=False, fold_north=True)
 
         lon = self.offset_halo_lon(lon, (jst, jed, ist, ied), tgt_halo)
 
-        # nj, ni = mask_halo[1]-mask_halo[0]+1, mask_halo[3]-mask_halo[2]+1
-        # if self.bipolar_n and jed==self.nj:
-        #     iq1, iq3 = self.ni//4, self.ni//4*3
-        #     if ist<=iq1: lon[nj-tgt_halo:nj, -ni+tgt_halo-ist:iq1-ist+tgt_halo+1] -= 360.0
-        #     if ied>=iq3: lon[nj-tgt_halo:nj, -ni+iq3-ist+tgt_halo:self.ni-ist+tgt_halo+1] += 360.0
-
-        return domain(lon=lon, lat=lat, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius)
+        return Domain(lon=lon, lat=lat, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius)
 
     @staticmethod
     def compare_edges(edge1, edge2, rfl1, rfl2, except_level=0, verbose=True, message=''):
@@ -522,9 +488,9 @@ class domain(ThinWalls.ThinWalls):
                 edge2 = {'simple':tw2.u_simple[s2], 'effective':tw2.u_effective[s2]}
             else: raise Exception('Axis error')
 
-            edge_s = domain.compare_edges(edge1['simple'], edge2['simple'], tw1.max_rfl, tw2.max_rfl,
+            edge_s = Domain.compare_edges(edge1['simple'], edge2['simple'], tw1.max_rfl, tw2.max_rfl,
                                           except_level=except_level, verbose=verbose, message=msg+' (simple)')
-            edge_e = domain.compare_edges(edge1['effective'], edge2['effective'], tw1.max_rfl, tw2.max_rfl,
+            edge_e = Domain.compare_edges(edge1['effective'], edge2['effective'], tw1.max_rfl, tw2.max_rfl,
                                           except_level=except_level, verbose=verbose, message=msg+ ' (effective)')
             return edge_s, edge_e, max(tw1.max_rfl, tw2.max_rfl)
 
@@ -592,11 +558,11 @@ class domain(ThinWalls.ThinWalls):
                 nj, ni = thisbox.shape
                 nhf = (ied-ist)//2
                 msg = '{}'.format(thisbox.domain_id)
-                Vs[-1,ist:ist+nhf] = domain.compare_edges(thisbox.v_simple[nj-halo, halo:halo+nhf],
+                Vs[-1,ist:ist+nhf] = Domain.compare_edges(thisbox.v_simple[nj-halo, halo:halo+nhf],
                                                           thisbox.v_simple[nj-halo,halo+nhf:ni-halo][0,::-1],
                                                           thisbox.max_rfl, thisbox.max_rfl,
                                                           except_level=except_level, verbose=verbose, message=msg)
-                Ve[-1,ist:ist+nhf] = domain.compare_edges(thisbox.v_effective[nj-halo, halo:halo+nhf],
+                Ve[-1,ist:ist+nhf] = Domain.compare_edges(thisbox.v_effective[nj-halo, halo:halo+nhf],
                                                           thisbox.v_effective[nj-halo,halo+nhf:ni-halo][0,::-1],
                                                           thisbox.max_rfl, thisbox.max_rfl,
                                                           except_level=except_level, verbose=verbose, message=msg)
@@ -638,32 +604,32 @@ class domain(ThinWalls.ThinWalls):
         # shared edges
         for jj in range(jst,jed):
             msg = 'np mask ({:d},{:d}) (simple)'.format(jj,ist)
-            Us[jj,ist] = domain.compare_edges(Us[jj,ist], mUs[halo+jj-jst,halo], Ur[jj,ist], mUr[halo+jj-jst,halo],
+            Us[jj,ist] = Domain.compare_edges(Us[jj,ist], mUs[halo+jj-jst,halo], Ur[jj,ist], mUr[halo+jj-jst,halo],
                                               except_level=except_level, verbose=verbose, message=msg)
             msg = 'np mask ({:d},{:d}) (effective)'.format(jj,ist)
-            Ue[jj,ist] = domain.compare_edges(Ue[jj,ist], mUe[halo+jj-jst,halo], Ur[jj,ist], mUr[halo+jj-jst,halo],
+            Ue[jj,ist] = Domain.compare_edges(Ue[jj,ist], mUe[halo+jj-jst,halo], Ur[jj,ist], mUr[halo+jj-jst,halo],
                                               except_level=except_level, verbose=verbose, message=msg)
             msg = 'np mask ({:d},{:d}) (simple)'.format(jj,ied)
-            Us[jj,ied] = domain.compare_edges(Us[jj,ied], mUs[halo+jj-jst,ni-halo], Ur[jj,ied], mUr[halo+jj-jst,ni-halo],
+            Us[jj,ied] = Domain.compare_edges(Us[jj,ied], mUs[halo+jj-jst,ni-halo], Ur[jj,ied], mUr[halo+jj-jst,ni-halo],
                                               except_level=except_level, verbose=verbose, message=msg)
             msg = 'np mask ({:d},{:d}) (effective)'.format(jj,ied)
-            Ue[jj,ied] = domain.compare_edges(Ue[jj,ied], mUe[halo+jj-jst,ni-halo], Ur[jj,ied], mUr[halo+jj-jst,ni-halo],
+            Ue[jj,ied] = Domain.compare_edges(Ue[jj,ied], mUe[halo+jj-jst,ni-halo], Ur[jj,ied], mUr[halo+jj-jst,ni-halo],
                                               except_level=except_level, verbose=verbose, message=msg)
             Ur[jj,ist] = max(Ur[jj,ist], mUr[halo+jj-jst,halo])
             Ur[jj,ied] = max(Ur[jj,ied], mUr[halo+jj-jst,ni-halo])
 
         for ii in range(ist,ied):
             msg = 'np mask ({:d},{:d}) (simple)'.format(jst,ii)
-            Vs[jst,ii] = domain.compare_edges(Vs[jst,ii], mVs[halo,halo+ii-ist], Vr[jst,ii], mVr[halo,halo+ii-ist],
+            Vs[jst,ii] = Domain.compare_edges(Vs[jst,ii], mVs[halo,halo+ii-ist], Vr[jst,ii], mVr[halo,halo+ii-ist],
                                               except_level=except_level, verbose=verbose, message=msg)
             msg = 'np mask ({:d},{:d}) (effective)'.format(jst,ii)
-            Ve[jst,ii] = domain.compare_edges(Ve[jst,ii], mVe[halo,halo+ii-ist], Vr[jst,ii], mVr[halo,halo+ii-ist],
+            Ve[jst,ii] = Domain.compare_edges(Ve[jst,ii], mVe[halo,halo+ii-ist], Vr[jst,ii], mVr[halo,halo+ii-ist],
                                               except_level=except_level, verbose=verbose, message=msg)
             msg = 'np mask ({:d},{:d}) (simple)'.format(jed,ii)
-            Vs[jed,ii] = domain.compare_edges(Vs[jed,ii], mVs[nj-halo,halo+ii-ist], Vr[jed,ii], mVr[nj-halo,halo+ii-ist],
+            Vs[jed,ii] = Domain.compare_edges(Vs[jed,ii], mVs[nj-halo,halo+ii-ist], Vr[jed,ii], mVr[nj-halo,halo+ii-ist],
                                               except_level=except_level, verbose=verbose, message=msg)
             msg = 'np mask ({:d},{:d}) (effective)'.format(jed,ii)
-            Ve[jed,ii] = domain.compare_edges(Ve[jed,ii], mVe[nj-halo,halo+ii-ist], Vr[jed,ii], mVr[nj-halo,halo+ii-ist],
+            Ve[jed,ii] = Domain.compare_edges(Ve[jed,ii], mVe[nj-halo,halo+ii-ist], Vr[jed,ii], mVr[nj-halo,halo+ii-ist],
                                               except_level=except_level, verbose=verbose, message=msg)
             Vr[jst,ii] = max(Vr[jst,ii], mVr[halo,halo+ii-ist])
             Vr[jed,ii] = max(Vr[jed,ii], mVr[nj-halo,halo+ii-ist])
@@ -678,10 +644,10 @@ class domain(ThinWalls.ThinWalls):
 
         for iiw, iie in zip(numpy.arange(istw,iedw,1), numpy.arange(iede-1,iste-1,-1)):
             msg = 'northern boundary ({:d},{:d}) (simple)'.format(iiw,iie)
-            Vs[-1,iiw] = domain.compare_edges(Vs[-1,iiw], Vs[-1,iie], Vr[-1,iiw], Vr[-1,iie],
+            Vs[-1,iiw] = Domain.compare_edges(Vs[-1,iiw], Vs[-1,iie], Vr[-1,iiw], Vr[-1,iie],
                                               except_level=except_level, verbose=verbose, message=msg)
             msg = 'northern boundary ({:d},{:d}) (effective)'.format(iiw,iie)
-            Ve[-1,iiw] = domain.compare_edges(Ve[-1,iiw], Ve[-1,iie], Vr[-1,iiw], Vr[-1,iie],
+            Ve[-1,iiw] = Domain.compare_edges(Ve[-1,iiw], Ve[-1,iie], Vr[-1,iiw], Vr[-1,iie],
                                               except_level=except_level, verbose=verbose, message=msg)
             Vr[-1,iiw] = max(Vr[-1,iiw], Vr[-1,iie])
             Vs[-1,iie], Ve[-1,iie], Vr[-1,iie] = Vs[-1,iiw], Ve[-1,iiw], Vr[-1,iiw]
@@ -706,7 +672,7 @@ class domain(ThinWalls.ThinWalls):
         self.stitch_subdomains(twlist, except_level=bnd_tol_level, verbose=verbose)
 
     def regrid_topography_masked(self, lat_start=None, lat_end=89.75, lat_step=0.5,
-                                 pelayout=None, tgt_halo=0, nprocs=1, src=None,
+                                 pelayout=None, tgt_halo=0, nprocs=1, src=None, src_halo=0,
                                  refine_loop_args={}, topo_gen_args={}, hitmap=None, bnd_tol_level=1, verbose=True):
 
         # Backup the initial mask domain indices
@@ -720,7 +686,7 @@ class domain(ThinWalls.ThinWalls):
             for mask in self.north_mask:
                 mask_domain = self.create_mask_domain(mask=mask, tgt_halo=tgt_halo, pole_radius=90.0-latc)
                 refine_loop_args['singularity_radius'] = mask_domain.pole_radius
-                mask_domain.regrid_topography(pelayout=pelayout, tgt_halo=tgt_halo, nprocs=nprocs, src=src,
+                mask_domain.regrid_topography(pelayout=pelayout, tgt_halo=tgt_halo, nprocs=nprocs, src=src, src_halo=src_halo,
                                               refine_loop_args=refine_loop_args, topo_gen_args=topo_gen_args, hitmap=hitmap,
                                               bnd_tol_level=bnd_tol_level)
                 self.stitch_mask_domain(mask_domain, mask, tgt_halo, except_level=bnd_tol_level)
@@ -888,32 +854,32 @@ class domain(ThinWalls.ThinWalls):
             lon_out[self.nj-(jst-halo)+1:, max(iq3-(ist-halo)+1,0):self.ni-(ist-halo)+1] += 360.0
         return lon_out
 
-def topo_gen(grid, do_mean_only=False, do_effective=True, save_hits=True, verbose=True):
+def topo_gen(grid, do_center_only=False, do_effective=True, save_hits=True, verbose=True):
     """Generate topography
 
     Parameters
     ----------
-    grid : refine_wrapper object
+    grid : RefineWrapper object
 
     Returns
     ----------
     tw : ThinWalls.ThinWalls object
     """
 
-    if do_mean_only:
+    if do_center_only:
         do_effective = False
-    use_center = grid.refine_loop_args['use_center'] and do_mean_only # reserve this for mean only for now
-    if verbose: print(grid.domain_id)
+    use_center = grid.refine_loop_args['use_center'] and do_center_only # reserve this for mean only for now
+    if verbose:
+        print(grid.domain_id)
 
     # Step 1: Refine grid and save the finest grid
     finest_grid = grid.refine_loop(verbose=verbose)[-1]
     nrfl = finest_grid.rfl
 
     if save_hits:
-        hits = hitmap(lon=grid.lon_src.arrayb, lat=grid.lat_src.arrayb, from_cell_center=False)
-        hits[:] = finest_grid.source_hits(grid.lon_src.arrayb, grid.lat_src.arrayb,
-                                          use_center=use_center, singularity_radius=0.0)
-        hits.box = grid.box_src
+        hits = HitMap(lon=grid.lon_src.bounds, lat=grid.lat_src.bounds, from_cell_center=False)
+        hits[:] = finest_grid.source_hits(grid.lon_src, grid.lat_src, use_center=use_center, singularity_radius=0.0)
+        hits.box = (grid.lat_src.n0, grid.lat_src.n1, grid.lon_src.n0, grid.lon_src.n1)
 
     # Step 2: Create a ThinWalls object on the finest grid and coarsen back
     tw = ThinWalls.ThinWalls(lon=finest_grid.lon, lat=finest_grid.lat, rfl=finest_grid.rfl)
@@ -926,7 +892,7 @@ def topo_gen(grid, do_mean_only=False, do_effective=True, save_hits=True, verbos
     else:
         tw.set_center_from_corner()
 
-    if not do_mean_only:
+    if not do_center_only:
         tw.set_edge_from_corner()
         if do_effective:
             # Initialize effective depths
@@ -960,7 +926,7 @@ def topo_gen_mp(domain_list, nprocs=None, topo_gen_args={}):
 
     return tw_list
 
-def write_output(domain, filename, do_mean_only=False, format='NETCDF3_64BIT_OFFSET', history='', description='',
+def write_output(domain, filename, do_center_only=False, format='NETCDF3_64BIT_OFFSET', history='', description='',
                  inverse_sign=True, elev_unit='m', dtype=numpy.float64, dtype_int=numpy.int32):
     """Output to netCDF
     """
@@ -985,8 +951,10 @@ def write_output(domain, filename, do_mean_only=False, format='NETCDF3_64BIT_OFF
         varout.long_name = long_name
 
     if description=='':
-        if do_mean_only:
-            description = "Mean topography at cell-centers"
+        # if do_mean_only:
+        #     description = "Mean topography at cell-centers"
+        if do_center_only:
+            description = "Min, mean and max elevation at cell-centers"
         else:
             description = "Min, mean and max elevation at cell-centers and u/v-edges"
 
@@ -998,9 +966,13 @@ def write_output(domain, filename, do_mean_only=False, format='NETCDF3_64BIT_OFF
     ncout.createDimension('nxq', nx+1)
     ncout.createDimension('nyq', ny+1)
 
-    if do_mean_only:
+    if do_center_only:
         write_variable(ncout, signed(domain.c_simple.ave), 'depth', 'c',
                     long_name='Simple cell-center mean topography')
+        write_variable(ncout, signed(domain.c_simple.hgh), 'depth_hgh', 'c',
+                    long_name='Simple cell-center highest topography')
+        write_variable(ncout, signed(domain.c_simple.low), 'depth_low', 'c',
+                    long_name='Simple cell-center lowest topography')
         write_variable(ncout, domain.c_refinelevel, 'c_refinelevel', 'c',
                     long_name='Refinement level at cell-centers', units='nondim', dtype=dtype_int)
     else:
@@ -1120,7 +1092,7 @@ def main(argv):
                             help='If specified, the repeating longitude in the last column is removed. Elevation along that longitude will be the mean.')
 
     parser_cc = parser.add_argument_group('Calculation options')
-    parser_cc.add_argument("--do_mean_only", action='store_true', help='Calculate only the mean topography at cell centers.')
+    parser_cc.add_argument("--do_center_only", action='store_true', help='Calculate only the mean topography at cell centers.')
     parser_cc.add_argument("--do_porous_effective", action='store_true', help='Calcuate effective depth in porous topography.')
     parser_cc.add_argument("--save_hits", action='store_true', help='Save hitmap to a file.')
 
@@ -1159,11 +1131,11 @@ def main(argv):
     if args.remove_src_repeat_lon:
         lon_src = lon_src[:-1]
         elev = numpy.c_[(elev[:,1]+elev[:,-1])*0.5, elev[:,1:-1]]
-    src = source_topo(lon_src, lat_src, elev)
+    src = SourceData(lon_src, lat_src, elev)
 
     # Read target grid
     if args.non_supergrid: raise Exception('Only supergrid is supported.')
-    print('Reading source data from ', args.target_grid)
+    print('Reading target grid from ', args.target_grid)
     if args.verbose:
         print(  "'"+args.lon_tgt+"'[::2, ::2]", '-> lonb_tgt')
         print(  "'"+args.lat_tgt+"'[::2, ::2]", '-> latb_tgt')
@@ -1181,8 +1153,8 @@ def main(argv):
     nprocs = args.nprocs
 
     # Calculation options
-    do_effective = False if args.do_mean_only else args.do_porous_effective
-    topo_gen_args = {'do_mean_only':args.do_mean_only,
+    do_effective = False if args.do_center_only else args.do_porous_effective
+    topo_gen_args = {'do_center_only':args.do_center_only,
                      'do_effective':do_effective,
                      }
 
@@ -1207,24 +1179,26 @@ def main(argv):
         print('np_lat_step: ', np_lat_step)
 
     # Create the target grid domain
-    dm = domain(lon=lonb_tgt, lat=latb_tgt, reentrant_x=True, bipolar_n=True, pole_radius=refine_options['singularity_radius'])
+    dm = Domain(lon=lonb_tgt, lat=latb_tgt, reentrant_x=True, bipolar_n=True, pole_radius=refine_options['singularity_radius'])
     hm = None
-    if args.save_hits: hm = hitmap(lon=lon_src, lat=lat_src, from_cell_center=True)
+    if args.save_hits:
+        hm = HitMap(lon=lon_src, lat=lat_src, from_cell_center=True)
 
     # Regrid
     bnd_tol_level = args.bnd_tol_level
-    if args.do_mean_only:
+    if args.do_center_only:
         bnd_tol_level = 0
     dm.regrid_topography(pelayout=pe, tgt_halo=args.tgt_halo, nprocs=nprocs, src=src, src_halo=args.src_halo,
                          refine_loop_args=refine_options, topo_gen_args=topo_gen_args, hitmap=hm,
                          bnd_tol_level=bnd_tol_level, verbose=args.verbose)
     if args.fixed_refine_level<0:
         # Donut update near the (geographic) north pole
-        dm.regrid_topography_masked(lat_end=np_lat_end, lat_step=np_lat_step, pelayout=pe_p, nprocs=nprocs, src=src,
+        dm.regrid_topography_masked(lat_end=np_lat_end, lat_step=np_lat_step, pelayout=pe_p, nprocs=nprocs, src=src, src_halo=args.src_halo,
                                     refine_loop_args=refine_options, topo_gen_args=topo_gen_args, hitmap=hm, verbose=args.verbose)
     # Output to a netCDF file
-    write_output(dm, args.output, do_mean_only=args.do_mean_only, format='NETCDF3_64BIT_OFFSET', history=' '.join(argv))
-    if args.save_hits: write_hitmap(hm, 'hitmap.nc')
+    write_output(dm, args.output, do_center_only=args.do_center_only, format='NETCDF3_64BIT_OFFSET', history=' '.join(argv))
+    if args.save_hits:
+        write_hitmap(hm, 'hitmap.nc')
 
 if __name__ == "__main__":
     main(sys.argv[1:])
