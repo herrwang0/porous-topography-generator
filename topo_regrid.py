@@ -4,8 +4,8 @@ import numpy
 import multiprocessing
 import functools
 import netCDF4
-# sys.path.insert(0,'/Users/hewang/lib/thin-wall-topography/python')
-sys.path.insert(0,'/Users/hewang/lib/porous-topography-generator/thin-wall-topography/python')
+sys.path.insert(0,'/Users/hewang/lib/thin-wall-topography/python')
+# sys.path.insert(0,'/Users/hewang/lib/porous-topography-generator/thin-wall-topography/python')
 import GMesh
 import ThinWalls
 # import importlib
@@ -68,14 +68,14 @@ class RefineWrapper(GMesh.GMesh):
     Object from this class encapsules source grid, elevation and arguments for refine_loop method.
     It can be generated as a subdomain of a full domain grid.
     """
-    def __init__(self, lon=None, lat=None, domain_id=(0,0), move_north_pole_lon=False,
+    def __init__(self, lon=None, lat=None, id=(0,0), move_north_pole_lon=False,
                  src=None, fit_src_lon=False, fit_src_lat=False, src_halo=0, mask_recs=[], refine_loop_args={}):
         """
         Parameters
         ----------
         lon, lat : array of float
             Cell corner coordinates
-        domain_id : tuple, optional
+        id : tuple, optional
             An identifier for the current subdomain. Used for easily linking subdomain to the parent domain.
         move_north_pole_lon : bool, optional
             If true, re-assign the longitude of the north pole (lat==90N) (if it is inside of the domain) to the longitude
@@ -106,7 +106,7 @@ class RefineWrapper(GMesh.GMesh):
                 b) ignore the hits in source grid
         verbose : bool, optional
         """
-        self.domain_id = domain_id
+        self.id = id
         super().__init__(lon=lon, lat=lat)
         if move_north_pole_lon: self._move_north_pole()
 
@@ -116,7 +116,7 @@ class RefineWrapper(GMesh.GMesh):
 
     def __str__(self):
         disp = [str(type(self)),
-                "Sub-domain identifier: {}".format(self.domain_id),
+                "Sub-domain identifier: {}".format(self.id),
                 "Target grid size (nj ni): ({:9d}, {:9d})".format( self.nj, self.ni ),
                 "Source grid size (nj ni): ({:9d}, {:9d}), indices: {}".format( self.lat_src.size, self.lon_src.size,
                                                                                 (self.lat_src.n0, self.lat_src.n1,
@@ -187,7 +187,7 @@ class RefineWrapper(GMesh.GMesh):
 class Domain(ThinWalls.ThinWalls):
     """A container for regrided topography
     """
-    def __init__(self, lon=None, lat=None, reentrant_x=False, bipolar_n=False, num_north_pole=0, pole_radius=0.25):
+    def __init__(self, lon=None, lat=None, reentrant_x=False, fold_n=False, num_north_pole=0, pole_radius=0.25):
         """
         Parameters
         ----------
@@ -196,7 +196,7 @@ class Domain(ThinWalls.ThinWalls):
         reentrant_x : bool, optional
             If true, the domain is reentrant in x-direction. Used for halos and assigning depth to the westernmost and easternmost u-edges.
             Default is False.
-        bipolar_n : bool, optional
+        fold_n : bool, optional
             If true, the domain is folded at the northern boundary. Used for halos and assigning depth to the northernmost v-edges.
             Default is False.
         num_north_pole : integer, optional
@@ -209,16 +209,13 @@ class Domain(ThinWalls.ThinWalls):
         super().__init__(lon=lon, lat=lat)
 
         self.reentrant_x = reentrant_x
-        self.bipolar_n = bipolar_n
-        if self.bipolar_n:
+        self.fold_n = fold_n
+        if self.fold_n:
             assert self.ni%2==0, 'An odd number ni does not work with bi-polar cap.'
             num_north_pole=2
-        self.c_refinelevel = numpy.zeros( self.shape, dtype=numpy.int32 )
-        self.u_refinelevel = numpy.zeros( (self.shape[0],self.shape[1]+1), dtype=numpy.int32 )
-        self.v_refinelevel = numpy.zeros( (self.shape[0]+1,self.shape[1]), dtype=numpy.int32 )
 
         self.pole_radius = pole_radius
-        self._find_north_pole_rectangles(num_north_pole=num_north_pole)
+        self.north_mask = self.find_north_pole_rectangles(num_north_pole=num_north_pole)
 
     def __str__(self):
         disp = [str(type(self)),
@@ -231,32 +228,43 @@ class Domain(ThinWalls.ThinWalls):
                 disp.append('  js,je,is,ie: %s, shape: (%i,%i)'%(box, box[1]-box[0], box[3]-box[2]))
         return '\n'.join(disp)
 
-    def _find_north_pole_rectangles(self, north_pole_cutoff_lat=None, num_north_pole=0):
+    def find_north_pole_rectangles(self, north_pole_cutoff_lat=None, num_north_pole=0):
         """Returns the extented rectangles of the grids enclosed by a latitudinal circle
-        full_circles : bool, optional
-            If true, the grid is assumed to be a full bi-polar cap and therefore has two north pole rectangles.
+        Parameters
+        ----------
+        north_pole_cutoff_lat : float, optional
+            Cutoff latitude (not included) which the rectangle boxes enclose.
+        num_north_pole : int, optional
+            Number of North Poles.
+
+        Output:
+        ----------
+        recs : list of tuples
+            Indices of rectangle boxes. Number of boxes depends on num_north_pole.
         """
         if north_pole_cutoff_lat is None:
             north_pole_cutoff_lat = 90.0 - self.pole_radius
         jj, ii = numpy.where(self.lat>north_pole_cutoff_lat)
 
         if jj.size==0 or ii.size==0 or num_north_pole==0:
-            self.north_mask = []
+            recs = []
         elif num_north_pole==1:
-            self.north_mask = [(jj.min(), jj.max(), ii.min(), ii.max())]
+            recs = [(jj.min(), jj.max(), ii.min(), ii.max())]
         elif num_north_pole==2:
             jjw = jj[ii<self.ni//2]; iiw = ii[ii<self.ni//2]
             jje = jj[ii>self.ni//2]; iie = ii[ii>self.ni//2]
             assert numpy.all(jjw==jje), 'nj in the two mask domains mismatch.'
             jj = jjw
             assert (jjw.max()==self.nj), 'mask domains do not reach the north boundary.'
-            assert (iiw.min()+iie.max()==self.ni) and ((iiw.max()+iie.min()==self.ni)), 'ni in the two mask domains mismatch.'
-            self.north_mask = [(jj.min(), jj.max(), iiw.min(), iiw.max()),
-                               (jj.min(), jj.max(), iie.min(), iie.max())]
+            assert (iiw.min()+iie.max()==self.ni) and ((iiw.max()+iie.min()==self.ni)), \
+                'ni in the two mask domains mismatch.'
+            recs = [(jj.min(), jj.max(), iiw.min(), iiw.max()),
+                    (jj.min(), jj.max(), iie.min(), iie.max())]
             # self.north_mask = [(jj.min(), 2*self.nj-jj.min(), iiw.min(), iiw.max()),
             #                    (jj.min(), 2*self.nj-jj.min(), iie.min(), iie.max())] # extend passing the northern boundary for halos
         else:
             raise Exception('Currently only two north pole rectangles are supported.')
+        return recs
 
     def find_local_masks(self, box, halo):
         """Finds where the north pole rectangles overlap with the subdomain"""
@@ -310,7 +318,7 @@ class Domain(ThinWalls.ThinWalls):
 
         if pelayout[1]==1 and tgt_halo>0:
             print('WARNING: only 1 subdomain in i-direction, which may not work with bi-polar cap.')
-        if (not x_sym) and self.bipolar_n:
+        if (not x_sym) and self.fold_n:
             print(('WARNING: domain decomposition is not guaranteed to be symmetric in x direction, ',
                    'which may not work with bi-polar cap.'))
 
@@ -329,17 +337,17 @@ class Domain(ThinWalls.ThinWalls):
                 self.pelayout[pe_j, pe_i] = ((jst, jed, ist, ied), tgt_halo) # indices for cell centers
 
                 box_data = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
-                lon = Domain.slice(self.lon, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.bipolar_n)
-                lat = Domain.slice(self.lat, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.bipolar_n)
+                lon = Domain.slice(self.lon, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
+                lat = Domain.slice(self.lat, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
                 lon = self.offset_halo_lon(lon, (jst, jed, ist, ied), tgt_halo)
 
                 masks = self.find_local_masks((jst, jed, ist, ied), tgt_halo)
 
                 fit_src_lon = True
-                if jed==self.nj and tgt_halo>0:
-                    fit_src_lon=False
+                if tgt_halo>0 and lat.max()==90:
+                    fit_src_lon = False
                 fit_src_lat = True
-                chunks[pe_j, pe_i] = RefineWrapper(lon=lon, lat=lat, domain_id=(pe_j, pe_i),
+                chunks[pe_j, pe_i] = RefineWrapper(lon=lon, lat=lat, id=(pe_j, pe_i),
                                                    src=src, fit_src_lon=fit_src_lon, fit_src_lat=fit_src_lat, src_halo=src_halo,
                                                    mask_recs=masks, refine_loop_args=refine_loop_args)
                 if verbose:
@@ -370,295 +378,246 @@ class Domain(ThinWalls.ThinWalls):
 
         return Domain(lon=lon, lat=lat, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius)
 
-    @staticmethod
-    def compare_edges(edge1, edge2, rfl1, rfl2, except_level=0, verbose=True, message=''):
-        """Check if two edges are identical and if not, return the proper one.
-
-        Parameters
-        ----------
-        edge1, edge2 : ThinWalls.Stats object
-            Edges at the same grid location from two sources (e.g. different tiles).
-        rfl1, rfl2 : int
-            Corresponding maximum refinement levels of the two edges.
-        except_level : int, optional
-            Controls whether stopping the script or reconciling edges with different heights.
-            0 : raise an exception and stop the script if there is difference.
-            1 : differences between edges with different RFLs are tolerated. Use the heights
-                of the edge with higher refinement level.
-            2 : all differences are tolerated. If the two edges have the same RFL, max() is
-                used to determine the final low, ave and hgh. Should be used for debug only.
-        verbose : bool, optional
-            If true, screen display the differences and how they are treated.
-        message : str, optional
-            Information (tile ID, measure) added to screen display.
-
-        Output
-            edge : ThinWalls.Stats object
-        ----------
-
+    def stitch_subdomains(self, thinwalls_list, tolerance=0, do_thinwalls=True, do_effective=True,
+                          do_roughness=False, do_gradient=False, verbose=True):
+        """"Stitch subdomains
         """
-        ndiff_hgh = (edge1.hgh!=edge2.hgh).sum()
-        ndiff_ave = (edge1.ave!=edge2.ave).sum()
-        ndiff_low = (edge1.hgh!=edge2.hgh).sum()
-
-        str_diff = '[hgh: {:4d}, ave: {:4d}, low: {:4d}]'.format(ndiff_hgh, ndiff_ave, ndiff_low)
-        str_rfls = '[rfl={:2d} vs rfl={:2d}]'.format(rfl1, rfl2)
-        msg = ' '.join(['Edge differ', str_diff, ':', message, str_rfls])+'. '
-        if ndiff_hgh+ndiff_ave+ndiff_low!=0:
-            if except_level==0:
-                raise Exception(msg)
-            if rfl1!=rfl2:
-                if verbose:
-                    print(msg+'Use higher rfl')
-                if rfl1>rfl2:
-                    return edge1
-                else:
-                    return edge2
-            else:
-                if except_level==1:
-                    raise Exception(msg)
-                if verbose:
-                    print(msg+'Use shallower depth')
-                edge = ThinWalls.Stats(edge1.shape)
-                edge.low = numpy.maximum(edge1.low, edge2.low)
-                edge.ave = numpy.maximum(numpy.maximum(edge1.ave, edge2.ave), edge.low)
-                edge.hgh = numpy.maximum(numpy.maximum(edge1.hgh, edge2.hgh), edge.ave)
-                return edge
-        else:
-            if rfl1!=rfl2 and verbose: # This should hardly happen.
-                print(message+' have the same edge but different refinement levels '+str_rfls+'.')
-            return edge1
-
-    def stitch_subdomains(self, thinwalls_list, except_level=0, verbose=True):
-        """Stitch subdomain depth fields (u,v,c)
-
-        Parameters
-        ----------
-        thinwalls_list : list
-            A list of ThinWalls class in the subdomains
-        except_level : int, optional
-            Input for compare_edges
-        verbose : bool, optional
-            Input for compare_edges
-        """
-
-        def subdomain_edge(tw1, tw2, halo=0, axis=0, fold_north=False, except_level=2, verbose=True):
-            """A wrapper for treating shared edges between two subdomains with compare_edges method.
-
-            Parameters
-            ----------
-            tw1, tw2 : ThinWalls.ThinWalls object
-                Two neighboring subdomains, tw1 (left/bottom) and tw2 (right/top)
-            halo : int, optional
-                Target grid halo size.
-            axis : integer, optional
-                The axis index, 0 for y direction and 1 for x direction
-            fold_north : bool, optional
-                If true, the two subdomains are connected at the folding northern boundary.
-            except_level : int, optional
-                Input for compare_edges
-            verbose : bool, optional
-                Input for compare_edges
-
-            Output
-            ----------
-            edge_s : ThinWall.Stat object
-                Edge Simple depth parameters (hgh, ave and low)
-            edge_e : ThinWall.Stat object
-                Edge Effective depth parameters (hgh, ave and low)
-            rfl : int
-                Refinement level
-            """
-            nj1, ni1 = tw1.shape
-            nj2, ni2 = tw2.shape
-            msg = '{} and {}'.format(tw1.domain_id, tw2.domain_id)
-            if axis==0:
-                assert ni1==ni2, msg+' have different Ni.'
-                s1 = (nj1-halo, slice(halo,ni1-halo))
-                if fold_north:
-                    s2 = (nj2-halo, slice(ni1-halo-1,-ni1+halo-1,-1))
-                else:
-                    s2 = (halo, slice(halo,ni2-halo))
-                edge1 = {'simple':tw1.v_simple[s1], 'effective':tw1.v_effective[s1]}
-                edge2 = {'simple':tw2.v_simple[s2], 'effective':tw2.v_effective[s2]}
-            elif axis==1:
-                assert nj1==nj2, msg+' have different Nj.'
-                s1, s2 = (slice(halo,nj1-halo), ni1-halo), (slice(halo,nj1-halo), halo)
-                edge1 = {'simple':tw1.u_simple[s1], 'effective':tw1.u_effective[s1]}
-                edge2 = {'simple':tw2.u_simple[s2], 'effective':tw2.u_effective[s2]}
-            else: raise Exception('Axis error')
-
-            edge_s = Domain.compare_edges(edge1['simple'], edge2['simple'], tw1.max_rfl, tw2.max_rfl,
-                                          except_level=except_level, verbose=verbose, message=msg+' (simple)')
-            edge_e = Domain.compare_edges(edge1['effective'], edge2['effective'], tw1.max_rfl, tw2.max_rfl,
-                                          except_level=except_level, verbose=verbose, message=msg+ ' (effective)')
-            return edge_s, edge_e, max(tw1.max_rfl, tw2.max_rfl)
-
+        do_effective = do_effective and do_thinwalls
         npj, npi = self.pelayout.shape
 
         # Put the list of ThinWalls on a 2D array to utilize numpy array's slicing
-        boxes = numpy.empty( (npj, npi), dtype=object )
+        tiles = numpy.empty( (npj, npi), dtype=object )
         for tw in thinwalls_list:
-            boxes[tw.domain_id] = tw
+            tiles[tw.id] = tw
 
-        # aliasing
-        Cs, Us, Vs = self.c_simple, self.u_simple, self.v_simple
-        Ce, Ue, Ve = self.c_effective, self.u_effective, self.v_effective
-        Cr, Ur, Vr = self.c_refinelevel, self.u_refinelevel, self.v_refinelevel
+        self.c_rfl = numpy.zeros( self.shape, dtype=numpy.int32 )
+        if do_thinwalls:
+            self.u_rfl = numpy.zeros( (self.shape[0],self.shape[1]+1), dtype=numpy.int32 )
+            self.v_rfl = numpy.zeros( (self.shape[0]+1,self.shape[1]), dtype=numpy.int32 )
 
         for iy in range(npj):
             for ix in range(npi):
-                (jst, jed, ist, ied), halo = self.pelayout[iy, ix]
-                # cell center sizes
-                nj, ni = boxes[iy,ix].shape
+                this = tiles[iy,ix]
+                (jsg, jeg, isg, ieg), halo = self.pelayout[iy, ix] # global indices
+                nj, ni = tiles[iy, ix].shape
+                jst, jet, ist, iet = halo, nj-halo, halo, ni-halo # tile indices
 
-                Cs[jst:jed, ist:ied] = boxes[iy,ix].c_simple[halo:nj-halo, halo:ni-halo]
-                Ce[jst:jed, ist:ied] = boxes[iy,ix].c_effective[halo:nj-halo, halo:ni-halo]
-                Cr[jst:jed, ist:ied] = boxes[iy,ix].max_rfl
+                self.c_simple[jsg:jeg,isg:ieg] = this.c_simple[jst:jet,ist:iet]
+                self.c_rfl[jsg:jeg,isg:ieg] = this.mrfl
 
-                Us[jst:jed, ist:ied+1] = boxes[iy,ix].u_simple[halo:nj-halo, halo:ni+1-halo]
-                Ue[jst:jed, ist:ied+1] = boxes[iy,ix].u_effective[halo:nj-halo, halo:ni+1-halo]
-                Ur[jst:jed, ist:ied+1] = boxes[iy,ix].max_rfl
+                if not do_thinwalls:
+                    continue
 
-                Vs[jst:jed+1, ist:ied] = boxes[iy,ix].v_simple[halo:nj+1-halo, halo:ni-halo]
-                Ve[jst:jed+1, ist:ied] = boxes[iy,ix].v_effective[halo:nj+1-halo, halo:ni-halo]
-                Vr[jst:jed+1, ist:ied] = boxes[iy,ix].max_rfl
+                self.u_simple[jsg:jeg,isg:ieg+1] = this.u_simple[jst:jet,ist:iet+1]
+                self.u_rfl[jsg:jeg,isg:ieg+1] = this.mrfl
+                self.v_simple[jsg:jeg+1,isg:ieg] = this.v_simple[jst:jet+1,ist:iet]
+                self.v_rfl[jsg:jeg+1,isg:ieg] = this.mrfl
 
-                # Shared boundaries
-                if ix<npi-1:
-                    Us[jst:jed, ied], Ue[jst:jed, ied], Ur[jst:jed, ied] \
-                        = subdomain_edge(boxes[iy,ix], boxes[iy,ix+1], halo=halo, axis=1,
-                                         except_level=except_level, verbose=verbose)
+                if do_effective:
+                    self.c_effective[jsg:jeg,isg:ieg] = this.c_effective[jst:jet,ist:iet]
+                    self.u_effective[jsg:jeg,isg:ieg+1] = this.u_effective[jst:jet,ist:iet+1]
+                    self.v_effective[jsg:jeg+1,isg:ieg] = this.v_effective[jst:jet+1,ist:iet]
+
+                if (ix<npi-1) or (ix==npi-1 and self.reentrant_x):
+                    if ix<npi-1:
+                        TR = tiles[iy,ix+1]
+                    else:
+                        TR = tiles[iy,0]
+                    edgeloc = '{} and {}'.format(this.id, TR.id)
+                    self.u_simple[jsg:jeg, ieg] = match_edges(this.u_simple[jst:jet,iet],
+                        TR.u_simple[jst:jet,ist], this.mrfl, TR.mrfl,
+                        tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)')
+                    self.u_rfl[jsg:jeg, ieg] = max(this.mrfl, TR.mrfl)
+                    if do_effective:
+                        self.u_effective[jsg:jeg, ieg] = match_edges(this.u_effective[jst:jet,iet],
+                            TR.u_effective[jst:jet,ist], this.mrfl, TR.mrfl,
+                            tolerance=tolerance, verbose=verbose, message=edgeloc+' (effective)')
                 if iy<npj-1:
-                    Vs[jed, ist:ied], Ve[jed, ist:ied], Vr[jed, ist:ied] \
-                        = subdomain_edge(boxes[iy,ix], boxes[iy+1,ix], halo=halo, axis=0,
-                                         except_level=except_level, verbose=verbose)
-
+                    TU = tiles[iy+1,ix]
+                    edgeloc = '{} and {}'.format(this.id, TU.id)
+                    self.v_simple[jeg,isg:ieg] = match_edges(this.v_simple[jet,ist:iet],
+                        TU.v_simple[jst,ist:iet], this.mrfl, TU.mrfl,
+                        tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)')
+                    self.v_rfl[jeg,isg:ieg] = max(this.mrfl, TU.mrfl)
+                    if do_effective:
+                        self.v_effective[jeg,isg:ieg] = match_edges(this.v_effective[jet,ist:iet],
+                            TU.v_effective[jst,ist:iet], this.mrfl, TU.mrfl,
+                            tolerance=tolerance, verbose=verbose, message=edgeloc+' (effective)')
         # Cyclic/folding boundaries
-        if self.reentrant_x:
-            for iy in range(npj):
-                (jst, jed, _, _), halo = self.pelayout[iy,-1]
-                Us[jst:jed, -1], Ue[jst:jed, -1], Ur[jst:jed, -1] \
-                    = subdomain_edge(boxes[iy,-1], boxes[iy,0], halo=halo, axis=1,
-                                     except_level=except_level, verbose=verbose)
-                Us[jst:jed, 0], Ue[jst:jed, 0], Ur[jst:jed, 0] \
-                    = Us[jst:jed, -1], Ue[jst:jed, -1], Ur[jst:jed, -1]
-        if self.bipolar_n:
-            for ix in range(npi//2):
-                (_, _, ist, ied), halo = self.pelayout[-1,ix]
-                Vs[-1,ist:ied], Ve[-1,ist:ied], Vr[-1,ist:ied] \
-                    = subdomain_edge(boxes[-1,ix], boxes[-1,npi-ix-1], halo=halo, axis=0, fold_north=True,
-                                     except_level=except_level, verbose=verbose)
-                (_, _, istf, iedf), _ = self.pelayout[-1,npi-ix-1]
-                Vs[-1,istf:iedf], Ve[-1,istf:iedf], Vr[-1,istf:iedf] \
-                    = Vs[-1,ist:ied][0,::-1], Ve[-1,ist:ied][0,::-1], Vr[-1,ist:ied][::-1]
-            if npi%2!=0:
-                (_, _, ist, ied), halo = self.pelayout[-1,npi//2]
-                thisbox = boxes[-1,npi//2]
-                nj, ni = thisbox.shape
-                nhf = (ied-ist)//2
-                msg = '{}'.format(thisbox.domain_id)
-                Vs[-1,ist:ist+nhf] = Domain.compare_edges(thisbox.v_simple[nj-halo, halo:halo+nhf],
-                                                          thisbox.v_simple[nj-halo,halo+nhf:ni-halo][0,::-1],
-                                                          thisbox.max_rfl, thisbox.max_rfl,
-                                                          except_level=except_level, verbose=verbose, message=msg)
-                Ve[-1,ist:ist+nhf] = Domain.compare_edges(thisbox.v_effective[nj-halo, halo:halo+nhf],
-                                                          thisbox.v_effective[nj-halo,halo+nhf:ni-halo][0,::-1],
-                                                          thisbox.max_rfl, thisbox.max_rfl,
-                                                          except_level=except_level, verbose=verbose, message=msg)
-                Vs[-1,ist+nhf:ied] = Vs[-1,ist:ist+nhf][0,::-1]
-                Ve[-1,ist+nhf:ied] = Ve[-1,ist:ist+nhf][0,::-1]
-                Vr[-1,ist:ied] = thisbox.max_rfl
+        if do_thinwalls:
+            if self.reentrant_x:
+                self.u_simple[:,0], self.u_rfl[:,0] = self.u_simple[:,-1], self.u_rfl[:,-1]
+                if do_effective:
+                    self.u_effective[:,0] = self.u_effective[:,-1]
 
-    def stitch_mask_domain(self, mask_domain, mask, halo, except_level=2, verbose=False):
+            if self.fold_n:
+                for ix in range(npi//2):
+                    (_, _, isg, ieg), halo = self.pelayout[-1,ix]
+                    (_, _, isgf, iegf), _ = self.pelayout[-1,npi-ix-1]
+
+                    this, TU = tiles[-1,ix], tiles[-1,npi-ix-1]
+                    edgeloc = '{} and {}'.format(this.id, TU.id)
+                    (nj1, ni1), (nj2, ni2) = this.shape, TU.shape
+                    jet1, ist1, iet1 = nj1-halo, halo, ni1-halo
+                    jet2, ist2, iet2 = nj2-halo, -ni2+halo-1, ni2-halo-1
+
+                    self.v_simple[-1,isg:ieg] = match_edges(this.v_simple[jet1,ist1:iet1],
+                        TU.v_simple[jet2,iet2:ist2:-1], this.mrfl, TU.mrfl,
+                        tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)')
+                    self.v_rfl[-1,isg:ieg] = max(this.mrfl, TU.mrfl)
+                    self.v_simple[-1,isgf:iegf] = self.v_simple[-1,isg:ieg][::-1]
+                    self.v_rfl[-1,isgf:iegf] = self.v_rfl[-1,isg:ieg][::-1]
+
+                    if do_effective:
+                        self.v_effective[-1,isg:ieg] = match_edges(this.v_effective[jet1,ist1:iet1],
+                            TU.v_effective[jet2,iet2:ist2:-1], this.mrfl, TU.mrfl,
+                            tolerance=tolerance, verbose=verbose, message=edgeloc+' (effective)')
+                        self.v_effective[-1,isgf:iegf] = self.v_effective[-1,isg:ieg][::-1]
+
+                if npi%2!=0:
+                    (_, _, ist, ied), halo = self.pelayout[-1,npi//2]
+                    this = tiles[-1,npi//2]
+                    nj, ni = this.shape
+                    nhf = (ied-ist)//2
+                    edgeloc = '{}'.format(this.id)
+                    self.v_simple[-1,ist:ist+nhf] = match_edges(this.v_simple[nj-halo,halo:halo+nhf],
+                        this.v_simple[nj-halo,halo+nhf:ni-halo:][::-1], this.mrfl, this.mrfl,
+                        tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)')
+                    self.v_simple[-1,ist+nhf:ied] = self.v_simple[-1,ist:ist+nhf][::-1]
+                    self.v_rfl[-1,ist:ied] = this.mrfl
+                    if do_effective:
+                        self.v_effective[-1,ist:ist+nhf] = match_edges(this.v_effective[nj-halo,halo:halo+nhf],
+                            this.v_effective[nj-halo,halo+nhf:ni-halo:][::-1], this.mrfl, this.mrfl,
+                            tolerance=tolerance, verbose=verbose, message=edgeloc+' (effective)')
+                        self.v_effective[-1,ist+nhf:ied] = self.v_effective[-1, ist:ist+nhf][::-1]
+
+        if do_roughness:
+            self.roughness = numpy.zeros( self.shape )
+            for iy in range(npj):
+                for ix in range(npi):
+                    (jst, jed, ist, ied), halo = self.pelayout[iy, ix]
+                    nj, ni = tiles[iy,ix].shape
+                    self.roughness[jst:jed,ist:ied] = tiles[iy,ix].roughness[halo:nj-halo,halo:ni-halo]
+        if do_gradient:
+            self.gradient = numpy.zeros( self.shape )
+            for iy in range(npj):
+                for ix in range(npi):
+                    (jst, jed, ist, ied), halo = self.pelayout[iy, ix]
+                    nj, ni = tiles[iy,ix].shape
+                    self.gradient[jst:jed,ist:ied] = tiles[iy,ix].gradient[halo:nj-halo,halo:ni-halo]
+
+    def stitch_mask_domain(self, mask, rec, halo, do_thinwalls=True, do_effective=True,
+                           do_roughness=False, do_gradient=False, tolerance=2, verbose=False):
         """
         The assumption is the masked domain has the higher refine level
         """
-        jst, jed, ist, ied = mask
-
+        do_effective = do_effective and do_thinwalls
+        jsg, jeg, isg, ieg = rec  # global indices
         # Cell center sizes
-        nj, ni = jed-jst+2*halo, ied-ist+2*halo
+        nj, ni = jeg-jsg+2*halo, ieg-isg+2*halo
+        jst, jet, ist, iet = halo, nj-halo, halo, ni-halo  # tile indices
 
         # aliasing
-        Cs, Us, Vs = self.c_simple, self.u_simple, self.v_simple
-        Ce, Ue, Ve = self.c_effective, self.u_effective, self.v_effective
-        Cr, Ur, Vr = self.c_refinelevel, self.u_refinelevel, self.v_refinelevel
+        dCs, dUs, dVs = self.c_simple, self.u_simple, self.v_simple
+        mCs, mUs, mVs = mask.c_simple, mask.u_simple, mask.v_simple
+        dCr, dUr, dVr = self.c_rfl, self.u_rfl, self.v_rfl
+        mCr, mUr, mVr = mask.c_rfl, mask.u_rfl, mask.v_rfl
+        if do_effective:
+            dCe, dUe, dVe = self.c_effective, self.u_effective, self.v_effective
+            mCe, mUe, mVe = mask.c_effective, mask.u_effective, mask.v_effective
 
-        mCs, mUs, mVs = mask_domain.c_simple, mask_domain.u_simple, mask_domain.v_simple
-        mCe, mUe, mVe = mask_domain.c_effective, mask_domain.u_effective, mask_domain.v_effective
-        mCr, mUr, mVr = mask_domain.c_refinelevel, mask_domain.u_refinelevel, mask_domain.v_refinelevel
+        # assert numpy.all(dCr[jsg:jeg,isg:ieg]<=mCr[jst:jet,ist:iet]), \
+        #     'Mask refinement level lower than parent domain.'
 
         # middle part
-        Cs[jst:jed, ist:ied] = mCs[halo:nj-halo, halo:ni-halo]
-        Ce[jst:jed, ist:ied] = mCe[halo:nj-halo, halo:ni-halo]
-        Cr[jst:jed, ist:ied] = mCr[halo:nj-halo, halo:ni-halo]
+        dCs[jsg:jeg,isg:ieg] = mCs[jst:jet,ist:iet]
+        dCr[jsg:jeg,isg:ieg] = mCr[jst:jet,ist:iet]
 
-        Us[jst:jed, ist+1:ied] = mUs[halo:nj-halo, halo+1:ni-halo]
-        Ue[jst:jed, ist+1:ied] = mUe[halo:nj-halo, halo+1:ni-halo]
-        Ur[jst:jed, ist+1:ied] = mUr[halo:nj-halo, halo+1:ni-halo]
+        if do_thinwalls:
+            dUs[jsg:jeg,isg+1:ieg] = mUs[jst:jet,ist+1:iet]
+            dUr[jsg:jeg,isg+1:ieg] = mUr[jst:jet,ist+1:iet]
+            dVs[jsg+1:jeg,isg:ieg] = mVs[jst+1:jet,ist:iet]
+            dVr[jsg+1:jeg,isg:ieg] = mVr[jst+1:jet,ist:iet]
 
-        Vs[jst+1:jed, ist:ied] = mVs[halo+1:nj-halo, halo:ni-halo]
-        Ve[jst+1:jed, ist:ied] = mVe[halo+1:nj-halo, halo:ni-halo]
-        Vr[jst+1:jed, ist:ied] = mVr[halo+1:nj-halo, halo:ni-halo]
+            msg = 'NP mask western edge (simple)'
+            dUs[jsg:jeg,isg] = match_edges(dUs[jsg:jeg,isg], mUs[jst:jet,ist],
+                                           dUr[jsg:jeg,isg], mUr[jst:jet,ist],
+                                           tolerance=tolerance, verbose=verbose, message=msg)
+            msg = 'NP mask eastern edge (simple)'
+            dUs[jsg:jeg,ieg] = match_edges(dUs[jsg:jeg,ieg], mUs[jst:jet,iet],
+                                           dUr[jsg:jeg,ieg], mUr[jst:jet,iet],
+                                           tolerance=tolerance, verbose=verbose, message=msg)
+            dUr[jsg:jeg,isg] = numpy.maximum(dUr[jsg:jeg,isg], mUr[jst:jet,ist])
+            dUr[jsg:jeg,ieg] = numpy.maximum(dUr[jsg:jeg,ieg], mUr[jst:jet,iet])
 
-        # shared edges
-        for jj in range(jst,jed):
-            msg = 'np mask ({:d},{:d}) (simple)'.format(jj,ist)
-            Us[jj,ist] = Domain.compare_edges(Us[jj,ist], mUs[halo+jj-jst,halo], Ur[jj,ist], mUr[halo+jj-jst,halo],
-                                              except_level=except_level, verbose=verbose, message=msg)
-            msg = 'np mask ({:d},{:d}) (effective)'.format(jj,ist)
-            Ue[jj,ist] = Domain.compare_edges(Ue[jj,ist], mUe[halo+jj-jst,halo], Ur[jj,ist], mUr[halo+jj-jst,halo],
-                                              except_level=except_level, verbose=verbose, message=msg)
-            msg = 'np mask ({:d},{:d}) (simple)'.format(jj,ied)
-            Us[jj,ied] = Domain.compare_edges(Us[jj,ied], mUs[halo+jj-jst,ni-halo], Ur[jj,ied], mUr[halo+jj-jst,ni-halo],
-                                              except_level=except_level, verbose=verbose, message=msg)
-            msg = 'np mask ({:d},{:d}) (effective)'.format(jj,ied)
-            Ue[jj,ied] = Domain.compare_edges(Ue[jj,ied], mUe[halo+jj-jst,ni-halo], Ur[jj,ied], mUr[halo+jj-jst,ni-halo],
-                                              except_level=except_level, verbose=verbose, message=msg)
-            Ur[jj,ist] = max(Ur[jj,ist], mUr[halo+jj-jst,halo])
-            Ur[jj,ied] = max(Ur[jj,ied], mUr[halo+jj-jst,ni-halo])
+            msg = 'NP mask northern edge (simple)'
+            dVs[jsg,isg:ieg] = match_edges(dVs[jsg,isg:ieg], mVs[jst,ist:iet],
+                                           dVr[jsg,isg:ieg], mVr[jst,ist:iet],
+                                           tolerance=tolerance, verbose=verbose, message=msg)
+            msg = 'NP mask southern edge (simple)'
+            dVs[jeg,isg:ieg] = match_edges(dVs[jeg,isg:ieg], mVs[jet,ist:iet],
+                                           dVr[jeg,isg:ieg], mVr[jet,ist:iet],
+                                           tolerance=tolerance, verbose=verbose, message=msg)
+            dVr[jsg,isg:ieg] = numpy.maximum(dVr[jsg,isg:ieg], mVr[jst,ist:iet])
+            dVr[jeg,isg:ieg] = numpy.maximum(dVr[jeg,isg:ieg], mVr[jet,ist:iet])
 
-        for ii in range(ist,ied):
-            msg = 'np mask ({:d},{:d}) (simple)'.format(jst,ii)
-            Vs[jst,ii] = Domain.compare_edges(Vs[jst,ii], mVs[halo,halo+ii-ist], Vr[jst,ii], mVr[halo,halo+ii-ist],
-                                              except_level=except_level, verbose=verbose, message=msg)
-            msg = 'np mask ({:d},{:d}) (effective)'.format(jst,ii)
-            Ve[jst,ii] = Domain.compare_edges(Ve[jst,ii], mVe[halo,halo+ii-ist], Vr[jst,ii], mVr[halo,halo+ii-ist],
-                                              except_level=except_level, verbose=verbose, message=msg)
-            msg = 'np mask ({:d},{:d}) (simple)'.format(jed,ii)
-            Vs[jed,ii] = Domain.compare_edges(Vs[jed,ii], mVs[nj-halo,halo+ii-ist], Vr[jed,ii], mVr[nj-halo,halo+ii-ist],
-                                              except_level=except_level, verbose=verbose, message=msg)
-            msg = 'np mask ({:d},{:d}) (effective)'.format(jed,ii)
-            Ve[jed,ii] = Domain.compare_edges(Ve[jed,ii], mVe[nj-halo,halo+ii-ist], Vr[jed,ii], mVr[nj-halo,halo+ii-ist],
-                                              except_level=except_level, verbose=verbose, message=msg)
-            Vr[jst,ii] = max(Vr[jst,ii], mVr[halo,halo+ii-ist])
-            Vr[jed,ii] = max(Vr[jed,ii], mVr[nj-halo,halo+ii-ist])
+            if do_effective:
+                dCe[jsg:jeg,isg:ieg] = mCe[jst:jet,ist:iet]
+                dUe[jsg:jeg,isg+1:ieg] = mUe[jst:jet,ist+1:iet]
+                dVe[jsg+1:jeg,isg:ieg] = mVe[jst+1:jet,ist:iet]
 
-    def stitch_mask_fold_north(self, except_level=2, verbose=False):
-        if not self.bipolar_n:
+                msg = 'NP mask W edge (effective)'
+                dUe[jsg:jeg,isg] = match_edges(dUe[jsg:jeg,isg], mUe[jst:jet,ist],
+                                                dUr[jsg:jeg,isg], mUr[jst:jet,ist],
+                                               tolerance=tolerance, verbose=verbose, message=msg)
+                msg = 'NP mask E edge (effective)'
+                dUe[jsg:jeg,ieg] = match_edges(dUe[jsg:jeg,ieg], mUe[jst:jet,iet],
+                                               dUr[jsg:jeg,ieg], mUr[jst:jet,iet],
+                                               tolerance=tolerance, verbose=verbose, message=msg)
+                msg = 'NP mask N edge (effective)'
+                dVe[jsg,isg:ieg] = match_edges(dVe[jsg,isg:ieg], mVe[jst,ist:iet],
+                                               dVr[jsg,isg:ieg], mVr[jst,ist:iet],
+                                               tolerance=tolerance, verbose=verbose, message=msg)
+                msg = 'NP mask S edge (effective)'
+                dVe[jeg,isg:ieg] = match_edges(dVe[jeg,isg:ieg], mVe[jet,ist:iet],
+                                               dVr[jeg,isg:ieg], mVr[jet,ist:iet],
+                                               tolerance=tolerance, verbose=verbose, message=msg)
+
+        if do_roughness:
+            self.roughness[jsg:jeg,isg:ieg] = mask.roughness[jst:jet,ist:iet]
+        if do_gradient:
+            self.gradient[jsg:jeg,isg:ieg] = mask.gradient[jst:jet,ist:iet]
+
+    def stitch_mask_fold_north(self, do_effective=False, tolerance=2, verbose=False):
+        if not self.fold_n:
             return
-        _, _, istw, iedw = self.north_mask[0]
-        _, _, iste, iede = self.north_mask[1]
+        _, _, isw, iew = self.north_mask[0]
+        _, _, ise, iee = self.north_mask[1]
 
-        Vs, Ve, Vr = self.v_simple, self.v_effective, self.v_refinelevel
+        Vs, Vr = self.v_simple, self.v_rfl
+        if do_effective: Ve = self.v_effective
 
-        for iiw, iie in zip(numpy.arange(istw,iedw,1), numpy.arange(iede-1,iste-1,-1)):
-            msg = 'northern boundary ({:d},{:d}) (simple)'.format(iiw,iie)
-            Vs[-1,iiw] = Domain.compare_edges(Vs[-1,iiw], Vs[-1,iie], Vr[-1,iiw], Vr[-1,iie],
-                                              except_level=except_level, verbose=verbose, message=msg)
-            msg = 'northern boundary ({:d},{:d}) (effective)'.format(iiw,iie)
-            Ve[-1,iiw] = Domain.compare_edges(Ve[-1,iiw], Ve[-1,iie], Vr[-1,iiw], Vr[-1,iie],
-                                              except_level=except_level, verbose=verbose, message=msg)
-            Vr[-1,iiw] = max(Vr[-1,iiw], Vr[-1,iie])
-            Vs[-1,iie], Ve[-1,iie], Vr[-1,iie] = Vs[-1,iiw], Ve[-1,iiw], Vr[-1,iiw]
+        msg = 'northern boundary (simple)'
+        Vs[-1,isw:iew] = match_edges(Vs[-1,isw:iew], Vs[-1,iee-1:ise-1:-1],
+                                     Vr[-1,isw:iew], Vr[-1,iee-1:ise-1:-1],
+                                     tolerance=tolerance, verbose=verbose, message=msg)
+        Vr[-1,isw:iew] = numpy.maximum(Vr[-1,isw:iew], Vr[-1,iee-1:ise-1:-1])
+        Vs[-1,iee-1:ise-1:-1], Vr[-1,iee-1:ise-1:-1] = Vs[-1,isw:iew], Vr[-1,isw:iew]
+        if do_effective:
+            msg = 'northern boundary (effective)'
+            Ve[-1,isw:iew] = match_edges(Ve[-1,isw:iew], Ve[-1,iee-1:ise-1:-1],
+                                         Vr[-1,isw:iew], Vr[-1,iee-1:ise-1:-1],
+                                         tolerance=tolerance, verbose=verbose, message=msg)
+            Ve[-1,iee-1:ise-1:-1] = Ve[-1,isw:iew]
 
     def regrid_topography(self, pelayout=None, tgt_halo=0, nprocs=1, src=None, src_halo=0,
-                          refine_loop_args={}, topo_gen_args={}, hitmap=None, bnd_tol_level=1, verbose=False):
+                          refine_loop_args={}, calc_args={}, hitmap=None, bnd_tol_level=1, verbose=False):
         """"A wrapper for getting elevation from a domain"""
         subdomains = self.create_subdomains(pelayout, tgt_halo=tgt_halo, src=src, src_halo=src_halo,
                                             refine_loop_args=refine_loop_args, verbose=verbose)
-        topo_gen_args['verbose'] = verbose
-        topo_gen_args['save_hits'] = not (hitmap is None)
+
+        topo_gen_args = calc_args.copy()
+        topo_gen_args.update({'save_hits': not (hitmap is None), 'verbose': verbose})
 
         if nprocs>1:
             twlist = topo_gen_mp(subdomains.flatten(), nprocs=nprocs, topo_gen_args=topo_gen_args)
@@ -669,31 +628,27 @@ class Domain(ThinWalls.ThinWalls):
             twlist, hitlist = zip(*twlist)
             hitmap.stitch_hits(hitlist)
 
-        self.stitch_subdomains(twlist, except_level=bnd_tol_level, verbose=verbose)
+        self.stitch_subdomains(twlist, tolerance=bnd_tol_level, verbose=verbose, **calc_args)
 
     def regrid_topography_masked(self, lat_start=None, lat_end=89.75, lat_step=0.5,
                                  pelayout=None, tgt_halo=0, nprocs=1, src=None, src_halo=0,
-                                 refine_loop_args={}, topo_gen_args={}, hitmap=None, bnd_tol_level=1, verbose=True):
-
-        # Backup the initial mask domain indices
-        north_mask_org = self.north_mask
+                                 refine_loop_args={}, calc_args={}, hitmap=None, bnd_tol_level=1, verbose=True):
 
         if lat_start is None: lat_start = 90.0 - self.pole_radius
-        print(lat_start, lat_end, lat_step)
         latc = lat_start + lat_step
+        north_masks = self.north_mask
         while latc<=lat_end:
             print(latc)
-            for mask in self.north_mask:
+            for mask in north_masks:
                 mask_domain = self.create_mask_domain(mask=mask, tgt_halo=tgt_halo, pole_radius=90.0-latc)
                 refine_loop_args['singularity_radius'] = mask_domain.pole_radius
                 mask_domain.regrid_topography(pelayout=pelayout, tgt_halo=tgt_halo, nprocs=nprocs, src=src, src_halo=src_halo,
-                                              refine_loop_args=refine_loop_args, topo_gen_args=topo_gen_args, hitmap=hitmap,
+                                              refine_loop_args=refine_loop_args, calc_args=calc_args, hitmap=hitmap,
                                               bnd_tol_level=bnd_tol_level)
-                self.stitch_mask_domain(mask_domain, mask, tgt_halo, except_level=bnd_tol_level)
-            self.stitch_mask_fold_north(except_level=bnd_tol_level)
-            self._find_north_pole_rectangles(north_pole_cutoff_lat=latc, num_north_pole=2)
+                self.stitch_mask_domain(mask_domain, mask, tgt_halo, tolerance=bnd_tol_level, **calc_args)
+            self.stitch_mask_fold_north(tolerance=bnd_tol_level, do_effective=calc_args['do_effective'])
+            north_masks = self.find_north_pole_rectangles(north_pole_cutoff_lat=latc, num_north_pole=2)
             latc += lat_step
-        self.north_mask = north_mask_org
 
     @staticmethod
     def decompose_domain(N, nd, symmetric=False):
@@ -842,19 +797,95 @@ class Domain(ThinWalls.ThinWalls):
         assert nj==jed-jst+halo*2+1 and ni==ied-ist+halo*2+1, 'offset_halo_lon: indices do not match with lon.'
         lon_out = lon.copy()
         if self.reentrant_x:
-            if self.bipolar_n: # no offset for the northeast and northwest corner blocks.
+            if self.fold_n: # no offset for the northeast and northwest corner blocks.
                 j_end = self.nj-(jst-halo)+1
             else:
                 j_end = None
             lon_out[:j_end, :-ni-(ist-halo)] -= 360.0
             lon_out[:j_end, self.ni-(ist-halo)+1:] += 360.0
-        if self.bipolar_n:
+        if self.fold_n:
             iq1, iq3 = self.ni//4, self.ni//4*3
             lon_out[self.nj-(jst-halo)+1:, -ni-(ist-halo):max(iq1-(ist-halo),0)] -= 360.0
             lon_out[self.nj-(jst-halo)+1:, max(iq3-(ist-halo)+1,0):self.ni-(ist-halo)+1] += 360.0
         return lon_out
 
-def topo_gen(grid, do_center_only=False, do_effective=True, save_hits=True, verbose=True):
+def match_edges(edge1, edge2, rfl1, rfl2, tolerance=0, verbose=True, message=''):
+    """Check if two edges are identical and if not, return the proper one.
+
+    Parameters
+    ----------
+    edge1, edge2 : ThinWalls.Stats object
+        Edges at the same grid location from two sources (e.g. different tiles).
+    rfl1, rfl2 : int
+        Corresponding maximum refinement levels of the two edges.
+    tolerance : int, optional
+        Controls whether stopping the script or reconciling edges with different heights.
+        0 : raise an exception and stop the script if there is difference.
+        1 : differences between edges with different RFLs are tolerated. Use the heights
+            of the edge with higher refinement level.
+        2 : all differences are tolerated. If the two edges have the same RFL, max() is
+            used to determine the final low, ave and hgh. Should be used for debug only.
+    verbose : bool, optional
+        If true, screen display the differences and how they are treated.
+    message : str, optional
+        Information (tile ID, measure) added to screen display.
+
+    Output
+        edge : ThinWalls.Stats object
+    ----------
+
+    """
+    ndiff_hgh = (edge1.hgh!=edge2.hgh).sum()
+    ndiff_ave = (edge1.ave!=edge2.ave).sum()
+    ndiff_low = (edge1.hgh!=edge2.hgh).sum()
+
+    str_diff = '[hgh: {:4d}, ave: {:4d}, low: {:4d}]'.format(ndiff_hgh, ndiff_ave, ndiff_low)
+    if numpy.array(rfl1).size==1 and numpy.array(rfl2).size==1:
+        str_rfls = '[rfl={:2d} vs rfl={:2d}]'.format(rfl1, rfl2)
+    else:
+        str_rfls = ''
+    msg = ' '.join(['Edges differ', str_diff, ':', message, str_rfls])+'. '
+
+    if numpy.array(rfl1).size==1:
+        rfl1 = numpy.ones_like(edge1.hgh) * rfl1
+    if numpy.array(rfl2).size==1:
+        rfl2 = numpy.ones_like(edge2.hgh) * rfl2
+
+    if ndiff_hgh+ndiff_ave+ndiff_low!=0:
+        if tolerance==0:
+            raise Exception(msg)
+        if numpy.any(rfl1!=rfl2):
+            if verbose:
+                print(msg+'Use higher rfl')
+            edge = ThinWalls.StatsBase(edge1.shape)
+            edge.low = numpy.where(rfl1>rfl2, edge1.low, edge2.low)
+            edge.ave = numpy.where(rfl1>rfl2, edge1.ave, edge2.ave)
+            edge.hgh = numpy.where(rfl1>rfl2, edge1.hgh, edge2.hgh)
+            return edge
+        else:
+            if tolerance==1:
+                raise Exception(msg)
+            if verbose:
+                print(msg+'Use shallower depth')
+            edge = ThinWalls.StatsBase(edge1.shape)
+            edge.low = numpy.maximum(edge1.low, edge2.low)
+            edge.ave = numpy.maximum(numpy.maximum(edge1.ave, edge2.ave), edge.low)
+            edge.hgh = numpy.maximum(numpy.maximum(edge1.hgh, edge2.hgh), edge.ave)
+            return edge
+    else:
+        if numpy.any(rfl1!=rfl2) and verbose: # This should hardly happen.
+            print(message+' have the same edge but different refinement levels '+str_rfls+'.')
+        return edge1
+
+def convol( levels, h, f, verbose=False ):
+    """Coarsens the product of h*f across all levels"""
+    levels[-1].height = ( h * f ).reshape(levels[-1].nj,levels[-1].ni)
+    for k in range( len(levels) - 1, 0, -1 ):
+        if verbose: print('Coarsening {} -> {}'.format(k,k-1))
+        levels[k].coarsenby2( levels[k-1] )
+    return levels[0].height
+
+def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do_effective=True, save_hits=True, verbose=True):
     """Generate topography
 
     Parameters
@@ -866,51 +897,79 @@ def topo_gen(grid, do_center_only=False, do_effective=True, save_hits=True, verb
     tw : ThinWalls.ThinWalls object
     """
 
-    if do_center_only:
-        do_effective = False
-    use_center = grid.refine_loop_args['use_center'] and do_center_only # reserve this for mean only for now
     if verbose:
-        print(grid.domain_id)
+        print(grid.id)
 
-    # Step 1: Refine grid and save the finest grid
-    finest_grid = grid.refine_loop(verbose=verbose)[-1]
-    nrfl = finest_grid.rfl
+    use_center = grid.refine_loop_args['use_center']
+    if (not use_center) and (do_roughness or do_gradient):
+        raise Exception('"use_center" needs to be used for roughness or gradient')
+    do_effective = do_effective and do_thinwalls
 
+    # Step 1: Refine grid
+    levels = grid.refine_loop(verbose=verbose)
+    nrfl = levels[-1].rfl
+    levels[-1].project_source_data_onto_target_mesh(grid.lon_src, grid.lat_src, grid.elev_src, use_center=use_center)
     if save_hits:
         hits = HitMap(lon=grid.lon_src.bounds, lat=grid.lat_src.bounds, from_cell_center=False)
-        hits[:] = finest_grid.source_hits(grid.lon_src, grid.lat_src, use_center=use_center, singularity_radius=0.0)
+        hits[:] = levels[-1].source_hits(grid.lon_src, grid.lat_src, use_center=use_center, singularity_radius=0.0)
         hits.box = (grid.lat_src.n0, grid.lat_src.n1, grid.lon_src.n0, grid.lon_src.n1)
 
     # Step 2: Create a ThinWalls object on the finest grid and coarsen back
-    tw = ThinWalls.ThinWalls(lon=finest_grid.lon, lat=finest_grid.lat, rfl=finest_grid.rfl)
-      # Spawn elevation data to the finest grid
-    tw.project_source_data_onto_target_mesh(grid.lon_src, grid.lat_src, grid.elev_src, use_center=use_center)
-
-      # Interpolate elevation to cell centers and edges (simple)
+    tw = ThinWalls.ThinWalls(lon=levels[-1].lon, lat=levels[-1].lat, rfl=levels[-1].rfl)
     if use_center:
-        tw.set_cell_mean(tw.height)
+        tw.set_cell_mean(levels[-1].height)
+        if do_thinwalls:
+            tw.set_edge_to_step()
     else:
-        tw.set_center_from_corner()
-
-    if not do_center_only:
-        tw.set_edge_from_corner()
-        if do_effective:
-            # Initialize effective depths
-            tw.init_effective_values()
-
-      # Coarsen back
+        tw.set_center_from_corner(levels[-1].height)
+        if do_thinwalls:
+            tw.set_edge_from_corner(levels[-1].height)
+    if do_effective:
+        tw.init_effective_values()
     for _ in range(nrfl):
         if do_effective:
-            tw.push_corners(verbose=verbose)
-            tw.lower_tallest_buttress(verbose=verbose)
-            # tw.fold_out_central_ridges(er=True, verbose=verbose)
-            tw.fold_out_central_ridges(verbose=verbose)
-            tw.invert_exterior_corners(verbose=verbose)
-        tw = tw.coarsen()
+            # # old methods
+            # patho_ew = tw.diagnose_EW_pathway()
+            # patho_ns = tw.diagnose_NS_pathway()
+            # patho_sw, patho_se, patho_ne, patho_nw = tw.diagnose_corner_pathways()
+            # tw.push_corners(verbose=verbose)
+            # tw.lower_tallest_buttress(verbose=verbose)
+            # # tw.fold_out_central_ridges(er=True, verbose=verbose)
+            # tw.fold_out_central_ridges(verbose=verbose)
+            # tw.invert_exterior_corners(verbose=verbose)
+            # tw.limit_NS_EW_connections(patho_ns, patho_ew, verbose=verbose)
+            # tw.limit_corner_connections(patho_sw, patho_se, patho_ne, patho_nw, verbose=verbose)
+
+            # new methods
+            pathn_s = tw.diagnose_pathways_straight()
+            pathn_c = tw.diagnose_pathways_corner()
+            tw.push_interior_corners(adjust_centers=True, verbose=verbose)
+            tw.lower_interior_buttresses(do_ave=True, adjust_mean=False, verbose=verbose)
+            tw.fold_interior_ridges(adjust_centers=True, adjust_low_only=True, verbose=verbose)
+            tw.expand_interior_corners(adjust_centers=True, verbose=verbose)
+            tw.limit_connections(connections=pathn_s, verbose=verbose)
+            tw.limit_connections(connections=pathn_c, verbose=verbose)
+            tw.lift_ave_max()
+        tw = tw.coarsen(do_thinwalls=do_thinwalls, do_effective=do_effective)
+
+    if do_roughness or do_gradient:
+        h2min=1.e-7
+        nx = 2**( len(levels) - 1 )
+        x = ( numpy.arange(nx) - ( nx - 1 ) /2 ) * numpy.sqrt( 12 / ( nx**2 - 1 ) ) # This formula satisfies <x>=0 and <x^2>=1
+        X, Y = numpy.meshgrid( x, x )
+        X, Y = X.reshape(1,nx,1,nx), Y.reshape(1,nx,1,nx)
+        h = levels[-1].height.reshape(levels[0].nj,nx,levels[0].ni,nx)
+        HX = convol( levels, h, X ) # mean of h * x
+        HY = convol( levels, h, Y ) # mean of h * y
+        if do_roughness:
+            H2 = convol( levels, h, h ) # mean of h^2
+            tw.roughness = H2 - tw.c_simple.ave**2 - HX - HY + h2min
+        if do_gradient:
+            tw.gradient = numpy.sqrt(HX**2 + HY**2)
 
     # Step 3: Decorate the coarsened ThinWalls object
-    tw.domain_id = grid.domain_id
-    tw.max_rfl = nrfl
+    tw.id = grid.id
+    tw.mrfl = nrfl
 
     if save_hits: return tw, hits
     else: return tw
@@ -973,7 +1032,7 @@ def write_output(domain, filename, do_center_only=False, format='NETCDF3_64BIT_O
                     long_name='Simple cell-center highest topography')
         write_variable(ncout, signed(domain.c_simple.low), 'depth_low', 'c',
                     long_name='Simple cell-center lowest topography')
-        write_variable(ncout, domain.c_refinelevel, 'c_refinelevel', 'c',
+        write_variable(ncout, domain.c_rfl, 'c_rfl', 'c',
                     long_name='Refinement level at cell-centers', units='nondim', dtype=dtype_int)
     else:
         # cell-centers
@@ -1022,11 +1081,11 @@ def write_output(domain, filename, do_center_only=False, format='NETCDF3_64BIT_O
                     long_name='Effective v-edge lowest topography')
 
         # refinement levels
-        write_variable(ncout, domain.c_refinelevel, 'c_refinelevel', 'c',
+        write_variable(ncout, domain.c_rfl, 'c_rfl', 'c',
                     long_name='Refinement level at cell-centers', units='nondim', dtype=dtype_int)
-        write_variable(ncout, domain.u_refinelevel, 'u_refinelevel', 'u',
+        write_variable(ncout, domain.u_rfl, 'u_rfl', 'u',
                     long_name='Refinement level at u-edges', units='nondim', dtype=dtype_int)
-        write_variable(ncout, domain.v_refinelevel, 'v_refinelevel', 'v',
+        write_variable(ncout, domain.v_rfl, 'v_rfl', 'v',
                     long_name='Refinement level at v-edges', units='nondim', dtype=dtype_int)
 
     ncout.description = description
@@ -1089,12 +1148,15 @@ def main(argv):
     parser_src.add_argument("--src_halo", default=0, type=int, help='Halo size of at both directions for subsetting source data')
     parser_src.add_argument("--elev", default='elevation', help='Field name in source file for elevation')
     parser_src.add_argument("--remove_src_repeat_lon", action='store_true',
-                            help='If specified, the repeating longitude in the last column is removed. Elevation along that longitude will be the mean.')
+                            help=('If specified, the repeating longitude in the last column is removed. '
+                                  'Elevation along that longitude will be the mean.'))
 
     parser_cc = parser.add_argument_group('Calculation options')
-    parser_cc.add_argument("--do_center_only", action='store_true', help='Calculate only the mean topography at cell centers.')
-    parser_cc.add_argument("--do_porous_effective", action='store_true', help='Calcuate effective depth in porous topography.')
-    parser_cc.add_argument("--save_hits", action='store_true', help='Save hitmap to a file.')
+    parser_cc.add_argument("--do_thinwalls", action='store_true', help='Calculate thin wall paraemeters')
+    parser_cc.add_argument("--do_thinwalls_effective", action='store_true', help='Calcuate effective depth in porous topography.')
+    parser_cc.add_argument("--do_roughness", action='store_true', help='Calcuate roughness')
+    parser_cc.add_argument("--do_gradient", action='store_true', help='Calcuate sub-grid gradient')
+    parser_cc.add_argument("--save_hits", action='store_true', help='Save hitmap to a file')
 
     parser_pe = parser.add_argument_group('Parallelism options')
     parser_pe.add_argument("--use_serial", action='store_true', help='If specified, use serial.')
@@ -1139,8 +1201,8 @@ def main(argv):
     if args.verbose:
         print(  "'"+args.lon_tgt+"'[::2, ::2]", '-> lonb_tgt')
         print(  "'"+args.lat_tgt+"'[::2, ::2]", '-> latb_tgt')
-    lonb_tgt = netCDF4.Dataset(args.target_grid).variables['x'][::2, ::2]
-    latb_tgt = netCDF4.Dataset(args.target_grid).variables['y'][::2, ::2]
+    lonb_tgt = netCDF4.Dataset(args.target_grid).variables['x'][::2, ::2].data
+    latb_tgt = netCDF4.Dataset(args.target_grid).variables['y'][::2, ::2].data
     if not args.no_mono_lon:
         for ix in range(lonb_tgt.shape[1]-1):
             if lonb_tgt[-1,ix+1]<lonb_tgt[-1,ix]: lonb_tgt[-1,ix+1] += 360.0
@@ -1153,17 +1215,22 @@ def main(argv):
     nprocs = args.nprocs
 
     # Calculation options
-    do_effective = False if args.do_center_only else args.do_porous_effective
-    topo_gen_args = {'do_center_only':args.do_center_only,
-                     'do_effective':do_effective,
-                     }
+    do_effective = args.do_thinwalls_effective and args.do_thinwalls
+    calc_args = {'do_thinwalls': args.do_thinwalls,
+                 'do_effective': do_effective,
+                 'do_roughness': args.do_roughness,
+                 'do_gradient': args.do_gradient
+                }
 
     # Regridding and topo_gen options
     north_pole_lat = args.pole_start
     np_lat_end = args.pole_end
     np_lat_step = args.pole_step
+    resolution_limit = not args.no_resolution_limit
+    if args.fixed_refine_level>0:
+        resolution_limit = False
     refine_options = {'use_center': args.use_center,
-                      'resolution_limit': not args.no_resolution_limit,
+                      'resolution_limit': resolution_limit,
                       'fixed_refine_level': args.fixed_refine_level,
                       'work_in_3d': args.refine_in_3d,
                       'singularity_radius': 90.0-args.pole_start,
@@ -1179,24 +1246,28 @@ def main(argv):
         print('np_lat_step: ', np_lat_step)
 
     # Create the target grid domain
-    dm = Domain(lon=lonb_tgt, lat=latb_tgt, reentrant_x=True, bipolar_n=True, pole_radius=refine_options['singularity_radius'])
+    dm = Domain(lon=lonb_tgt, lat=latb_tgt, reentrant_x=True, fold_n=True, num_north_pole=2, pole_radius=refine_options['singularity_radius'])
     hm = None
     if args.save_hits:
         hm = HitMap(lon=lon_src, lat=lat_src, from_cell_center=True)
 
     # Regrid
+    if args.verbose:
+        print('Starting regridding the domain')
     bnd_tol_level = args.bnd_tol_level
-    if args.do_center_only:
+    if not args.do_thinwalls:
         bnd_tol_level = 0
     dm.regrid_topography(pelayout=pe, tgt_halo=args.tgt_halo, nprocs=nprocs, src=src, src_halo=args.src_halo,
-                         refine_loop_args=refine_options, topo_gen_args=topo_gen_args, hitmap=hm,
+                         refine_loop_args=refine_options, calc_args=calc_args, hitmap=hm,
                          bnd_tol_level=bnd_tol_level, verbose=args.verbose)
     if args.fixed_refine_level<0:
+        if args.verbose:
+            print('Starting regridding masked North Pole')
         # Donut update near the (geographic) north pole
-        dm.regrid_topography_masked(lat_end=np_lat_end, lat_step=np_lat_step, pelayout=pe_p, nprocs=nprocs, src=src, src_halo=args.src_halo,
-                                    refine_loop_args=refine_options, topo_gen_args=topo_gen_args, hitmap=hm, verbose=args.verbose)
+        dm.regrid_topography_masked(lat_end=np_lat_end, lat_step=np_lat_step, pelayout=pe_p, nprocs=nprocs, tgt_halo=args.tgt_halo, src=src, src_halo=args.src_halo,
+                                    refine_loop_args=refine_options, calc_args=calc_args, hitmap=hm, verbose=args.verbose)
     # Output to a netCDF file
-    write_output(dm, args.output, do_center_only=args.do_center_only, format='NETCDF3_64BIT_OFFSET', history=' '.join(argv))
+    write_output(dm, args.output, do_center_only=(not args.do_thinwalls), format='NETCDF3_64BIT_OFFSET', history=' '.join(argv))
     if args.save_hits:
         write_hitmap(hm, 'hitmap.nc')
 
