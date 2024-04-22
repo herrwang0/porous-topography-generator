@@ -68,7 +68,7 @@ class RefineWrapper(GMesh.GMesh):
     Object from this class encapsules source grid, elevation and arguments for refine_loop method.
     It can be generated as a subdomain of a full domain grid.
     """
-    def __init__(self, lon=None, lat=None, id=(0,0), move_north_pole_lon=False,
+    def __init__(self, lon=None, lat=None, id=(0,0),
                  src=None, fit_src_lon=False, fit_src_lat=False, src_halo=0, mask_recs=[], refine_loop_args={}):
         """
         Parameters
@@ -108,7 +108,6 @@ class RefineWrapper(GMesh.GMesh):
         """
         self.id = id
         super().__init__(lon=lon, lat=lat)
-        if move_north_pole_lon: self._move_north_pole()
 
         self.north_masks = mask_recs
         self.refine_loop_args = refine_loop_args
@@ -119,8 +118,8 @@ class RefineWrapper(GMesh.GMesh):
                 "Sub-domain identifier: {}".format(self.id),
                 "Target grid size (nj ni): ({:9d}, {:9d})".format( self.nj, self.ni ),
                 "Source grid size (nj ni): ({:9d}, {:9d}), indices: {}".format( self.lat_src.size, self.lon_src.size,
-                                                                                (self.lat_src.n0, self.lat_src.n1,
-                                                                                 self.lon_src.n0, self.lon_src.n1) ),
+                                                                                (self.lat_src.start, self.lat_src.stop,
+                                                                                 self.lon_src.start, self.lon_src.stop) ),
                 ("Target grid range (lat lon): "+
                  "({:10.6f}, {:10.6f})  ({:10.6f}, {:10.6f})").format( self.lat.min(), self.lat.max(),
                                                                        numpy.mod(self.lon.min(), 360),
@@ -135,18 +134,6 @@ class RefineWrapper(GMesh.GMesh):
             for box in self.north_masks:
                 disp.append('  js,je,is,ie: %s, shape: (%i,%i)'%(box, box[1]-box[0], box[3]-box[2]))
         return '\n'.join(disp)
-
-    def _move_north_pole_lon(self):
-        """Move the North Pole longitude to that of its neighbor points
-        To avoid potential unnecessarily large source grid coverage with bipolar cap
-        """
-        jj, ii = numpy.nonzero(self.lat==90.0)
-        if ii.size>0:
-            for jjj, iii in zip(jj,ii):
-                try:
-                    self.lon[jjj, iii] = self.lon[jjj, iii-1]
-                except IndexError:
-                    self.lon[jjj, iii] = self.lon[jjj, iii+1]
 
     def _fit_src_coords(self, lon_src, lat_src, elev_src, do_fit_lon=True, do_fit_lat=True, halo=0):
         """Returns the four-element indices of source grid that covers the current domain."""
@@ -912,7 +899,7 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do
     if save_hits:
         hits = HitMap(lon=grid.lon_src.bounds, lat=grid.lat_src.bounds, from_cell_center=False)
         hits[:] = levels[-1].source_hits(grid.lon_src, grid.lat_src, use_center=use_center, singularity_radius=0.0)
-        hits.box = (grid.lat_src.n0, grid.lat_src.n1, grid.lon_src.n0, grid.lon_src.n1)
+        hits.box = (grid.lat_src.start, grid.lat_src.stop, grid.lon_src.start, grid.lon_src.stop)
 
     # Step 2: Create a ThinWalls object on the finest grid and coarsen back
     tw = ThinWalls.ThinWalls(lon=levels[-1].lon, lat=levels[-1].lat, rfl=levels[-1].rfl)
