@@ -80,7 +80,7 @@ class RefineWrapper(GMesh.GMesh):
         move_north_pole_lon : bool, optional
             If true, re-assign the longitude of the north pole (lat==90N) (if it is inside of the domain) to the longitude
             of the neighbor grid. Default is False.
-        lon_src, lat_src : GMesh.IntCoord objects, optional
+        lon_src, lat_src : GMesh.RegularCoord objects, optional
             Integerized source data coordinates.
         elev_src : array of float, optional
             Source elevation field.
@@ -163,8 +163,10 @@ class RefineWrapper(GMesh.GMesh):
         else:
             self.elev_src = elev_src[jst_src:jed_src:,ist_src:ied_src]
 
-        self.lon_src = GMesh.IntCoord(lon_src[0], dellon, sni, ist_src, ied_src)
-        self.lat_src = GMesh.IntCoord(lat_src[0], dellat, snj, jst_src, jed_src)
+        # self.lon_src = GMesh.IntCoord(lon_src[0], dellon, sni, ist_src, ied_src)
+        # self.lat_src = GMesh.IntCoord(lat_src[0], dellat, snj, jst_src, jed_src)
+        self.lon_src = GMesh.RegularCoord(sni, lon_src[0], True, delta=dellon).subset(ist_src, ied_src)
+        self.lat_src = GMesh.RegularCoord(snj, lat_src[0], False, delta=dellat).subset(jst_src, jed_src)
 
     def refine_loop(self, verbose=True):
         """A self-contained version of GMesh.refine_loop()"""
