@@ -118,8 +118,8 @@ class RefineWrapper(GMesh.GMesh):
                 "Sub-domain identifier: {}".format(self.id),
                 "Target grid size (nj ni): ({:9d}, {:9d})".format( self.nj, self.ni ),
                 "Source grid size (nj ni): ({:9d}, {:9d}), indices: {}".format( self.lat_src.size, self.lon_src.size,
-                                                                                (self.lat_src.start, self.lat_src.stop,
-                                                                                 self.lon_src.start, self.lon_src.stop) ),
+                                                                               (self.lat_src.start, self.lat_src.stop,
+                                                                                self.lon_src.start, self.lon_src.stop) ),
                 ("Target grid range (lat lon): "+
                  "({:10.6f}, {:10.6f})  ({:10.6f}, {:10.6f})").format( self.lat.min(), self.lat.max(),
                                                                        numpy.mod(self.lon.min(), 360),
@@ -165,8 +165,8 @@ class RefineWrapper(GMesh.GMesh):
 
         # self.lon_src = GMesh.IntCoord(lon_src[0], dellon, sni, ist_src, ied_src)
         # self.lat_src = GMesh.IntCoord(lat_src[0], dellat, snj, jst_src, jed_src)
-        self.lon_src = GMesh.RegularCoord(sni, lon_src[0], True, delta=dellon).subset(ist_src, ied_src)
-        self.lat_src = GMesh.RegularCoord(snj, lat_src[0], False, delta=dellat).subset(jst_src, jed_src)
+        self.lon_src = GMesh.RegularCoord(sni, lon_src[0]-0.5*dellon, True, delta=dellon).subset(ist_src, ied_src)
+        self.lat_src = GMesh.RegularCoord(snj, lat_src[0]-0.5*dellat, False, delta=dellat).subset(jst_src, jed_src)
 
     def refine_loop(self, verbose=True):
         """A self-contained version of GMesh.refine_loop()"""
