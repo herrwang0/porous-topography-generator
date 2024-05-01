@@ -12,18 +12,18 @@ import ThinWalls
 # GMesh = importlib.import_module('thin-wall-topography.python.GMesh')
 # ThinWalls = importlib.import_module('thin-wall-topography.python.ThinWalls')
 
-class SourceData(object):
-    """A container for source coords and data"""
-    def __init__(self, lon=None, lat=None, elev=None, remove_repeat=False):
-        assert len(lon.shape)==1, "Longitude is not 1D."
-        assert len(lat.shape)==1, "Latitude is not 1D."
-        assert elev.shape==(lat.shape[0], lon.shape[0]), "Elevation and coords shape mismatch."
-        self.lon = lon
-        self.lat = lat
-        self.elev = elev
-        if remove_repeat: self.remove_repeat()
-    def _remove_repeat(self):
-        pass
+# class SourceData(object):
+#     """A container for source coords and data"""
+#     def __init__(self, lon=None, lat=None, elev=None, remove_repeat=False):
+#         assert len(lon.shape)==1, "Longitude is not 1D."
+#         assert len(lat.shape)==1, "Latitude is not 1D."
+#         assert elev.shape==(lat.shape[0], lon.shape[0]), "Elevation and coords shape mismatch."
+#         self.lon = lon
+#         self.lat = lat
+#         self.elev = elev
+#         if remove_repeat: self.remove_repeat()
+#     def _remove_repeat(self):
+#         pass
 
 class HitMap(GMesh.GMesh):
     """A container for hits on the source grid
@@ -62,6 +62,115 @@ class HitMap(GMesh.GMesh):
         """Plots hit map"""
         return axis.pcolormesh( self.lon, self.lat, self[:,:], **kwargs )
 
+# class RefineWrapper(GMesh.GMesh):
+#     """A wrapper for grid refinement (of a subdomain)
+
+#     Object from this class encapsules source grid, elevation and arguments for refine_loop method.
+#     It can be generated as a subdomain of a full domain grid.
+#     """
+#     def __init__(self, lon=None, lat=None, id=(0,0),
+#                  src=None, fit_src_lon=False, fit_src_lat=False, src_halo=0, mask_recs=[], refine_loop_args={}):
+#         """
+#         Parameters
+#         ----------
+#         lon, lat : array of float
+#             Cell corner coordinates
+#         id : tuple, optional
+#             An identifier for the current subdomain. Used for easily linking subdomain to the parent domain.
+#         move_north_pole_lon : bool, optional
+#             If true, re-assign the longitude of the north pole (lat==90N) (if it is inside of the domain) to the longitude
+#             of the neighbor grid. Default is False.
+#         lon_src, lat_src : GMesh.RegularCoord objects, optional
+#             Integerized source data coordinates.
+#         elev_src : array of float, optional
+#             Source elevation field.
+#         fit_src_lon, fit_src_lat : bool, optional
+#             If true, source grid lon_src and lat_src are tailored to encompass target grid, with a halo decided by src_halo.
+#             elev_src is also trimmed accordingly. Default is False.
+#         src_halo : integer, optional
+#             Halo size of the source grid in either direction.
+#         mask_recs : list, optional
+#             List of rectangle indices of masks. Used to mask out maximum resolution near the north poles.
+#         refine_loop_args : dict, optional
+#             A dictionary storing arguments for refine_loop methods, possible items include:
+#             fixed_refine_level : integer, optional
+#                 If non-negative, the refine loop will only exit after reaching a certain level.
+#             max_mb : float, optional
+#                 Memory limit for both parent and subdomains. Can be superceded when creating subdomains.
+#             refine_in_3d : bool, optional
+#                 If true, interpolate coordinates with great circle distance when refine.
+#             use_resolution_limit : bool
+#                 If true, exit the refine loop based on the coarsest resolution of the target grid
+#             pole_radius : float
+#                 The radius of the north pole region used to a) decide the mask of north pole in the target grid;
+#                 b) ignore the hits in source grid
+#         verbose : bool, optional
+#         """
+#         self.id = id
+#         super().__init__(lon=lon, lat=lat)
+
+#         self.north_masks = mask_recs
+#         self.refine_loop_args = refine_loop_args
+#         self._fit_src_coords(src.lon, src.lat, src.elev, do_fit_lon=fit_src_lon, do_fit_lat=fit_src_lat, halo=src_halo)
+
+#     def __str__(self):
+#         disp = [str(type(self)),
+#                 "Sub-domain identifier: {}".format(self.id),
+#                 "Target grid size (nj ni): ({:9d}, {:9d})".format( self.nj, self.ni ),
+#                 "Source grid size (nj ni): ({:9d}, {:9d}), indices: {}".format( self.lat_src.size, self.lon_src.size,
+#                                                                                (self.lat_src.start, self.lat_src.stop,
+#                                                                                 self.lon_src.start, self.lon_src.stop) ),
+#                 ("Target grid range (lat lon): "+
+#                  "({:10.6f}, {:10.6f})  ({:10.6f}, {:10.6f})").format( self.lat.min(), self.lat.max(),
+#                                                                        numpy.mod(self.lon.min(), 360),
+#                                                                        numpy.mod(self.lon.max(), 360) ),
+#                 ("Source grid range (lat lon): "+
+#                  "({:10.6f}, {:10.6f})  ({:10.6f}, {:10.6f})").format( self.lat_src.bounds[0], self.lat_src.bounds[-1],
+#                                                                        numpy.mod(self.lon_src.bounds[0], 360),
+#                                                                        numpy.mod(self.lon_src.bounds[-1], 360) )
+#                ]
+#         if len(self.north_masks)>0:
+#             disp.append('North Pole rectangles: ')
+#             for box in self.north_masks:
+#                 disp.append('  js,je,is,ie: %s, shape: (%i,%i)'%(box, box[1]-box[0], box[3]-box[2]))
+#         return '\n'.join(disp)
+
+#     def _fit_src_coords(self, lon_src, lat_src, elev_src, do_fit_lon=True, do_fit_lat=True, halo=0):
+#         """Returns the four-element indices of source grid that covers the current domain."""
+#         sni, snj = lon_src.size, lat_src.size
+#         dellon, dellat = (lon_src[-1]-lon_src[0])/(sni-1), (lat_src[-1]-lat_src[0])/(snj-1)
+#         if do_fit_lon:
+#             # ist_src = (numpy.mod(numpy.floor(numpy.mod(self.lon.min()-lon_src[0]+0.5*dellon,360)/dellon)-halo+sni),sni).astype(int)
+#             # ied_src = (numpy.mod(numpy.floor(numpy.mod(self.lon.max()-lon_src[0]+0.5*dellon,360)/dellon)+halo+sni),sni).astype(int)+1
+#             ist_src = int(numpy.floor(numpy.mod(self.lon.min()-lon_src[0]+0.5*dellon,360)/dellon)-halo)
+#             if ist_src<0:
+#                 ist_src += sni
+#             ied_src = int(numpy.floor(numpy.mod(self.lon.max()-lon_src[0]+0.5*dellon,360)/dellon)+halo)+1
+#             if ied_src>sni:
+#                 ied_src -= sni
+#             if ist_src+1==ied_src:
+#                 ist_src, ied_src = 0, sni # All longitudes are included.
+#         else:
+#             ist_src, ied_src = 0, sni
+#         if do_fit_lat:
+#             jst_src = int(min(max(numpy.floor(0.5+(self.lat.min()-lat_src[0])/dellat-halo),0.0),snj-1))
+#             jed_src = int(min(max(numpy.floor(0.5+(self.lat.max()-lat_src[0])/dellat+halo),0.0),snj-1))+1
+#         else:
+#             jst_src, jed_src = 0, snj
+
+#         if ist_src>ied_src:
+#             self.elev_src = numpy.c_[elev_src[jst_src:jed_src,ist_src:], elev_src[jst_src:jed_src,:ied_src]]
+#         else:
+#             self.elev_src = elev_src[jst_src:jed_src:,ist_src:ied_src]
+
+#         self.lon_src = GMesh.RegularCoord(sni, lon_src[0]-0.5*dellon, True, delta=dellon).subset(ist_src, ied_src)
+#         self.lat_src = GMesh.RegularCoord(snj, lat_src[0]-0.5*dellat, False, delta=dellat).subset(jst_src, jed_src)
+
+#     def refine_loop(self, verbose=True):
+#         """A self-contained version of GMesh.refine_loop()"""
+#         return super().refine_loop(self.lon_src, self.lat_src, verbose=verbose, mask_res=self.north_masks,
+#                                    **self.refine_loop_args)
+
 class RefineWrapper(GMesh.GMesh):
     """A wrapper for grid refinement (of a subdomain)
 
@@ -69,7 +178,7 @@ class RefineWrapper(GMesh.GMesh):
     It can be generated as a subdomain of a full domain grid.
     """
     def __init__(self, lon=None, lat=None, id=(0,0),
-                 src=None, fit_src_lon=False, fit_src_lat=False, src_halo=0, mask_recs=[], refine_loop_args={}):
+                 eds=None, fit_src_lon=False, fit_src_lat=False, src_halo=0, mask_recs=[], refine_loop_args={}):
         """
         Parameters
         ----------
@@ -80,10 +189,8 @@ class RefineWrapper(GMesh.GMesh):
         move_north_pole_lon : bool, optional
             If true, re-assign the longitude of the north pole (lat==90N) (if it is inside of the domain) to the longitude
             of the neighbor grid. Default is False.
-        lon_src, lat_src : GMesh.RegularCoord objects, optional
-            Integerized source data coordinates.
-        elev_src : array of float, optional
-            Source elevation field.
+        eds : GMesh.UniformEDS objects, optional
+            Contains source coordinates and data.
         fit_src_lon, fit_src_lat : bool, optional
             If true, source grid lon_src and lat_src are tailored to encompass target grid, with a halo decided by src_halo.
             elev_src is also trimmed accordingly. Default is False.
@@ -111,23 +218,23 @@ class RefineWrapper(GMesh.GMesh):
 
         self.north_masks = mask_recs
         self.refine_loop_args = refine_loop_args
-        self._fit_src_coords(src.lon, src.lat, src.elev, do_fit_lon=fit_src_lon, do_fit_lat=fit_src_lat, halo=src_halo)
+        self._fit_src_coords(eds, do_fit_lon=fit_src_lon, do_fit_lat=fit_src_lat, halo=src_halo)
 
     def __str__(self):
         disp = [str(type(self)),
                 "Sub-domain identifier: {}".format(self.id),
                 "Target grid size (nj ni): ({:9d}, {:9d})".format( self.nj, self.ni ),
-                "Source grid size (nj ni): ({:9d}, {:9d}), indices: {}".format( self.lat_src.size, self.lon_src.size,
-                                                                               (self.lat_src.start, self.lat_src.stop,
-                                                                                self.lon_src.start, self.lon_src.stop) ),
+                "Source grid size (nj ni): ({:9d}, {:9d}), indices: {}".format( self.eds.nj, self.eds.ni,
+                                                                               (self.eds.lat_coord.start, self.eds.lat_coord.stop,
+                                                                                self.eds.lon_coord.start, self.eds.lon_coord.stop) ),
                 ("Target grid range (lat lon): "+
                  "({:10.6f}, {:10.6f})  ({:10.6f}, {:10.6f})").format( self.lat.min(), self.lat.max(),
                                                                        numpy.mod(self.lon.min(), 360),
                                                                        numpy.mod(self.lon.max(), 360) ),
                 ("Source grid range (lat lon): "+
-                 "({:10.6f}, {:10.6f})  ({:10.6f}, {:10.6f})").format( self.lat_src.bounds[0], self.lat_src.bounds[-1],
-                                                                       numpy.mod(self.lon_src.bounds[0], 360),
-                                                                       numpy.mod(self.lon_src.bounds[-1], 360) )
+                 "({:10.6f}, {:10.6f})  ({:10.6f}, {:10.6f})").format( self.eds.lat_coord.bounds[0], self.eds.lat_coord.bounds[-1],
+                                                                       numpy.mod(self.eds.lon_coord.bounds[0], 360),
+                                                                       numpy.mod(self.eds.lon_coord.bounds[-1], 360) )
                ]
         if len(self.north_masks)>0:
             disp.append('North Pole rectangles: ')
@@ -135,42 +242,19 @@ class RefineWrapper(GMesh.GMesh):
                 disp.append('  js,je,is,ie: %s, shape: (%i,%i)'%(box, box[1]-box[0], box[3]-box[2]))
         return '\n'.join(disp)
 
-    def _fit_src_coords(self, lon_src, lat_src, elev_src, do_fit_lon=True, do_fit_lat=True, halo=0):
+    def _fit_src_coords(self, eds, do_fit_lon=True, do_fit_lat=True, halo=0):
         """Returns the four-element indices of source grid that covers the current domain."""
-        sni, snj = lon_src.size, lat_src.size
-        dellon, dellat = (lon_src[-1]-lon_src[0])/(sni-1), (lat_src[-1]-lat_src[0])/(snj-1)
-        if do_fit_lon:
-            # ist_src = (numpy.mod(numpy.floor(numpy.mod(self.lon.min()-lon_src[0]+0.5*dellon,360)/dellon)-halo+sni),sni).astype(int)
-            # ied_src = (numpy.mod(numpy.floor(numpy.mod(self.lon.max()-lon_src[0]+0.5*dellon,360)/dellon)+halo+sni),sni).astype(int)+1
-            ist_src = int(numpy.floor(numpy.mod(self.lon.min()-lon_src[0]+0.5*dellon,360)/dellon)-halo)
-            if ist_src<0:
-                ist_src += sni
-            ied_src = int(numpy.floor(numpy.mod(self.lon.max()-lon_src[0]+0.5*dellon,360)/dellon)+halo)+1
-            if ied_src>sni:
-                ied_src -= sni
-            if ist_src+1==ied_src:
-                ist_src, ied_src = 0, sni # All longitudes are included.
-        else:
-            ist_src, ied_src = 0, sni
-        if do_fit_lat:
-            jst_src = int(min(max(numpy.floor(0.5+(self.lat.min()-lat_src[0])/dellat-halo),0.0),snj-1))
-            jed_src = int(min(max(numpy.floor(0.5+(self.lat.max()-lat_src[0])/dellat+halo),0.0),snj-1))+1
-        else:
-            jst_src, jed_src = 0, snj
 
-        if ist_src>ied_src:
-            self.elev_src = numpy.c_[elev_src[jst_src:jed_src,ist_src:], elev_src[jst_src:jed_src,:ied_src]]
-        else:
-            self.elev_src = elev_src[jst_src:jed_src:,ist_src:ied_src]
-
-        # self.lon_src = GMesh.IntCoord(lon_src[0], dellon, sni, ist_src, ied_src)
-        # self.lat_src = GMesh.IntCoord(lat_src[0], dellat, snj, jst_src, jed_src)
-        self.lon_src = GMesh.RegularCoord(sni, lon_src[0]-0.5*dellon, True, delta=dellon).subset(ist_src, ied_src)
-        self.lat_src = GMesh.RegularCoord(snj, lat_src[0]-0.5*dellat, False, delta=dellat).subset(jst_src, jed_src)
+        Is, Ie, Js, Je = eds.bb_slices( self.lon, self.lat, halo_lon=halo, halo_lat=halo )
+        if not do_fit_lon:
+            Is, Ie = 0, eds.ni
+        if not do_fit_lat:
+            Js, Je = 0, eds.nj
+        self.eds = eds.subset(Is, Ie, Js, Je)
 
     def refine_loop(self, verbose=True):
         """A self-contained version of GMesh.refine_loop()"""
-        return super().refine_loop(self.lon_src, self.lat_src, verbose=verbose, mask_res=self.north_masks,
+        return super().refine_loop(self.eds, verbose=verbose, mask_res=self.north_masks,
                                    **self.refine_loop_args)
 
 class Domain(ThinWalls.ThinWalls):
@@ -280,7 +364,7 @@ class Domain(ThinWalls.ThinWalls):
                 masks.append((j0, j1, i0, i1))
         return masks
 
-    def create_subdomains(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, src=None, src_halo=0,
+    def create_subdomains(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, eds=None, src_halo=0,
                           refine_loop_args={}, verbose=False):
         """Creates a list of sub-domains with corresponding source lon, lat and elev sections.
 
@@ -291,7 +375,7 @@ class Domain(ThinWalls.ThinWalls):
         x_sym, y_sym : boo, optional
             Whether try to use symmetric domain decomposition in x or y.
             Default is x_sym=True and y_sym=False.
-        src : SourceData object, optional
+        eds : GMesh.UniformEDS object, optional
             Source coordinates and topography
         src_halo : integer, optional
             Halo size of the source grid in either direction.
@@ -337,7 +421,7 @@ class Domain(ThinWalls.ThinWalls):
                     fit_src_lon = False
                 fit_src_lat = True
                 chunks[pe_j, pe_i] = RefineWrapper(lon=lon, lat=lat, id=(pe_j, pe_i),
-                                                   src=src, fit_src_lon=fit_src_lon, fit_src_lat=fit_src_lat, src_halo=src_halo,
+                                                   eds=eds, fit_src_lon=fit_src_lon, fit_src_lat=fit_src_lat, src_halo=src_halo,
                                                    mask_recs=masks, refine_loop_args=refine_loop_args)
                 if verbose:
                     print(chunks[pe_j, pe_i], '\n')
@@ -874,7 +958,7 @@ def convol( levels, h, f, verbose=False ):
         levels[k].coarsenby2( levels[k-1] )
     return levels[0].height
 
-def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do_effective=True, save_hits=True, verbose=True):
+def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do_effective=True, save_hits=True, verbose=True, timers=False):
     """Generate topography
 
     Parameters
@@ -886,8 +970,9 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do
     tw : ThinWalls.ThinWalls object
     """
 
+    if timers: gtic = GMesh.GMesh._toc(None, "")
     if verbose:
-        print(grid.id)
+        print('topo_gen() for domain {:}'.format(grid.id))
 
     use_center = grid.refine_loop_args['use_center']
     if (not use_center) and (do_roughness or do_gradient):
@@ -897,11 +982,15 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do
     # Step 1: Refine grid
     levels = grid.refine_loop(verbose=verbose)
     nrfl = levels[-1].rfl
-    levels[-1].project_source_data_onto_target_mesh(grid.lon_src, grid.lat_src, grid.elev_src, use_center=use_center)
+    if timers: tic = GMesh.GMesh._toc(gtic, "Refine grid")
+
+    # Step 2: Project elevation to the finest grid
+    levels[-1].project_source_data_onto_target_mesh(grid.eds, use_center=use_center)
     if save_hits:
         hits = HitMap(lon=grid.lon_src.bounds, lat=grid.lat_src.bounds, from_cell_center=False)
-        hits[:] = levels[-1].source_hits(grid.lon_src, grid.lat_src, use_center=use_center, singularity_radius=0.0)
+        hits[:] = levels[-1].source_hits(grid.eds, use_center=use_center, singularity_radius=0.0)
         hits.box = (grid.lat_src.start, grid.lat_src.stop, grid.lon_src.start, grid.lon_src.stop)
+    if timers: tic = GMesh.GMesh._toc(tic, "Project data")
 
     # Step 2: Create a ThinWalls object on the finest grid and coarsen back
     tw = ThinWalls.ThinWalls(lon=levels[-1].lon, lat=levels[-1].lat, rfl=levels[-1].rfl)
@@ -915,7 +1004,10 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do
             tw.set_edge_from_corner(levels[-1].height)
     if do_effective:
         tw.init_effective_values()
+    if timers: tic = GMesh.GMesh._toc(tic, "Initialize ThinWalls")
+    if verbose: print('Refine level {:} {:}'.format(tw.rfl, tw))
     for _ in range(nrfl):
+        if timers: ltic = GMesh.GMesh._toc(None, "")
         if do_effective:
             # # old methods
             # patho_ew = tw.diagnose_EW_pathway()
@@ -939,7 +1031,11 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do
             tw.limit_connections(connections=pathn_s, verbose=verbose)
             tw.limit_connections(connections=pathn_c, verbose=verbose)
             tw.lift_ave_max()
+        if timers: stic = GMesh.GMesh._toc(ltic, "Effective thinWalls")
         tw = tw.coarsen(do_thinwalls=do_thinwalls, do_effective=do_effective)
+        if verbose: print('Refine level {:} {:}'.format(tw.rfl, tw))
+        if timers: stic = GMesh.GMesh._toc(stic, "Coarsen thinwalls")
+    if timers: tic = GMesh.GMesh._toc(tic, "Total coarsen to target grid")
 
     if do_roughness or do_gradient:
         h2min=1.e-7
@@ -955,10 +1051,13 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do
             tw.roughness = H2 - tw.c_simple.ave**2 - HX - HY + h2min
         if do_gradient:
             tw.gradient = numpy.sqrt(HX**2 + HY**2)
+    if timers: tic = GMesh.GMesh._toc(tic, "Calcualte roughnesss and/or gradient")
 
     # Step 3: Decorate the coarsened ThinWalls object
     tw.id = grid.id
     tw.mrfl = nrfl
+
+    if timers: tic = GMesh.GMesh._toc(gtic, "Total topo_gen()")
 
     if save_hits: return tw, hits
     else: return tw
@@ -1182,7 +1281,7 @@ def main(argv):
     if args.remove_src_repeat_lon:
         lon_src = lon_src[:-1]
         elev = numpy.c_[(elev[:,1]+elev[:,-1])*0.5, elev[:,1:-1]]
-    src = SourceData(lon_src, lat_src, elev)
+    src = GMesh.GMesh.UniformEDS(lon_src, lat_src, elev)
 
     # Read target grid
     if args.non_supergrid: raise Exception('Only supergrid is supported.')
