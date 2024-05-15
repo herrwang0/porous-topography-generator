@@ -252,9 +252,13 @@ class RefineWrapper(GMesh.GMesh):
             Js, Je = 0, eds.nj
         self.eds = eds.subset(Is, Ie, Js, Je)
 
-    def refine_loop(self, verbose=True):
+    def refine_loop(self, test=True, verbose=True):
         """A self-contained version of GMesh.refine_loop()"""
-        return super().refine_loop(self.eds, verbose=verbose, mask_res=self.north_masks,
+        if test:
+            return super().refine_loop_test(self.eds, verbose=verbose, mask_res=self.north_masks,
+                                   **self.refine_loop_args)
+        else:
+            return super().refine_loop(self.eds, verbose=verbose, mask_res=self.north_masks,
                                    **self.refine_loop_args)
 
 class Domain(ThinWalls.ThinWalls):
@@ -364,7 +368,7 @@ class Domain(ThinWalls.ThinWalls):
                 masks.append((j0, j1, i0, i1))
         return masks
 
-    def create_subdomains(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, eds=None, src_halo=0,
+    def create_subdomains(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, eds=None, fit_eds=True, src_halo=0,
                           refine_loop_args={}, verbose=False):
         """Creates a list of sub-domains with corresponding source lon, lat and elev sections.
 
@@ -416,10 +420,13 @@ class Domain(ThinWalls.ThinWalls):
 
                 masks = self.find_local_masks((jst, jed, ist, ied), tgt_halo)
 
-                fit_src_lon = True
-                if tgt_halo>0 and lat.max()==90:
-                    fit_src_lon = False
-                fit_src_lat = True
+                if fit_eds:
+                    fit_src_lon = True
+                    if tgt_halo>0 and lat.max()==90:
+                        fit_src_lon = False
+                    fit_src_lat = True
+                else:
+                    fit_src_lon, fit_src_lat = False, False
                 chunks[pe_j, pe_i] = RefineWrapper(lon=lon, lat=lat, id=(pe_j, pe_i),
                                                    eds=eds, fit_src_lon=fit_src_lon, fit_src_lat=fit_src_lat, src_halo=src_halo,
                                                    mask_recs=masks, refine_loop_args=refine_loop_args)
@@ -683,14 +690,14 @@ class Domain(ThinWalls.ThinWalls):
                                          tolerance=tolerance, verbose=verbose, message=msg)
             Ve[-1,iee-1:ise-1:-1] = Ve[-1,isw:iew]
 
-    def regrid_topography(self, pelayout=None, tgt_halo=0, nprocs=1, src=None, src_halo=0,
-                          refine_loop_args={}, calc_args={}, hitmap=None, bnd_tol_level=1, verbose=False):
+    def regrid_topography(self, pelayout=None, tgt_halo=0, nprocs=1, eds=None, src_halo=0,
+                          refine_loop_args={}, calc_args={}, hitmap=None, bnd_tol_level=1, test_refine_loop=False, verbose=False):
         """"A wrapper for getting elevation from a domain"""
-        subdomains = self.create_subdomains(pelayout, tgt_halo=tgt_halo, src=src, src_halo=src_halo,
+        subdomains = self.create_subdomains(pelayout, tgt_halo=tgt_halo, eds=eds, src_halo=src_halo,
                                             refine_loop_args=refine_loop_args, verbose=verbose)
 
         topo_gen_args = calc_args.copy()
-        topo_gen_args.update({'save_hits': not (hitmap is None), 'verbose': verbose})
+        topo_gen_args.update({'save_hits': not (hitmap is None), 'verbose': verbose, 'test_refine_loop': test_refine_loop})
 
         if nprocs>1:
             twlist = topo_gen_mp(subdomains.flatten(), nprocs=nprocs, topo_gen_args=topo_gen_args)
@@ -704,8 +711,9 @@ class Domain(ThinWalls.ThinWalls):
         self.stitch_subdomains(twlist, tolerance=bnd_tol_level, verbose=verbose, **calc_args)
 
     def regrid_topography_masked(self, lat_start=None, lat_end=89.75, lat_step=0.5,
-                                 pelayout=None, tgt_halo=0, nprocs=1, src=None, src_halo=0,
-                                 refine_loop_args={}, calc_args={}, hitmap=None, bnd_tol_level=1, verbose=True):
+                                 pelayout=None, tgt_halo=0, nprocs=1, eds=None, src_halo=0,
+                                 refine_loop_args={}, calc_args={}, hitmap=None, bnd_tol_level=1,
+                                 test_refine_loop=False, verbose=True):
 
         if lat_start is None: lat_start = 90.0 - self.pole_radius
         latc = lat_start + lat_step
@@ -715,9 +723,9 @@ class Domain(ThinWalls.ThinWalls):
             for mask in north_masks:
                 mask_domain = self.create_mask_domain(mask=mask, tgt_halo=tgt_halo, pole_radius=90.0-latc)
                 refine_loop_args['singularity_radius'] = mask_domain.pole_radius
-                mask_domain.regrid_topography(pelayout=pelayout, tgt_halo=tgt_halo, nprocs=nprocs, src=src, src_halo=src_halo,
+                mask_domain.regrid_topography(pelayout=pelayout, tgt_halo=tgt_halo, nprocs=nprocs, eds=eds, src_halo=src_halo,
                                               refine_loop_args=refine_loop_args, calc_args=calc_args, hitmap=hitmap,
-                                              bnd_tol_level=bnd_tol_level)
+                                              bnd_tol_level=bnd_tol_level, test_refine_loop=test_refine_loop)
                 self.stitch_mask_domain(mask_domain, mask, tgt_halo, tolerance=bnd_tol_level, **calc_args)
             self.stitch_mask_fold_north(tolerance=bnd_tol_level, do_effective=calc_args['do_effective'])
             north_masks = self.find_north_pole_rectangles(north_pole_cutoff_lat=latc, num_north_pole=2)
@@ -958,7 +966,7 @@ def convol( levels, h, f, verbose=False ):
         levels[k].coarsenby2( levels[k-1] )
     return levels[0].height
 
-def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do_effective=True, save_hits=True, verbose=True, timers=False):
+def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do_effective=True, save_hits=True, test_refine_loop=False, verbose=True, timers=False):
     """Generate topography
 
     Parameters
@@ -980,16 +988,17 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do
     do_effective = do_effective and do_thinwalls
 
     # Step 1: Refine grid
-    levels = grid.refine_loop(verbose=verbose)
+    levels = grid.refine_loop(test=test_refine_loop, verbose=verbose)
     nrfl = levels[-1].rfl
     if timers: tic = GMesh.GMesh._toc(gtic, "Refine grid")
 
     # Step 2: Project elevation to the finest grid
     levels[-1].project_source_data_onto_target_mesh(grid.eds, use_center=use_center)
     if save_hits:
-        hits = HitMap(lon=grid.lon_src.bounds, lat=grid.lat_src.bounds, from_cell_center=False)
+        lon_src, lat_src = grid.eds.lon_coord, grid.eds.lat_coord
+        hits = HitMap(shape=(lat_src.size, lon_src.size))
         hits[:] = levels[-1].source_hits(grid.eds, use_center=use_center, singularity_radius=0.0)
-        hits.box = (grid.lat_src.start, grid.lat_src.stop, grid.lon_src.start, grid.lon_src.stop)
+        hits.box = (lat_src.start, lat_src.stop, lon_src.start, lon_src.stop)
     if timers: tic = GMesh.GMesh._toc(tic, "Project data")
 
     # Step 2: Create a ThinWalls object on the finest grid and coarsen back
@@ -1281,7 +1290,7 @@ def main(argv):
     if args.remove_src_repeat_lon:
         lon_src = lon_src[:-1]
         elev = numpy.c_[(elev[:,1]+elev[:,-1])*0.5, elev[:,1:-1]]
-    src = GMesh.GMesh.UniformEDS(lon_src, lat_src, elev)
+    eds = GMesh.UniformEDS(lon_src, lat_src, elev)
 
     # Read target grid
     if args.non_supergrid: raise Exception('Only supergrid is supported.')
@@ -1345,14 +1354,14 @@ def main(argv):
     bnd_tol_level = args.bnd_tol_level
     if not args.do_thinwalls:
         bnd_tol_level = 0
-    dm.regrid_topography(pelayout=pe, tgt_halo=args.tgt_halo, nprocs=nprocs, src=src, src_halo=args.src_halo,
+    dm.regrid_topography(pelayout=pe, tgt_halo=args.tgt_halo, nprocs=nprocs, eds=eds, src_halo=args.src_halo,
                          refine_loop_args=refine_options, calc_args=calc_args, hitmap=hm,
                          bnd_tol_level=bnd_tol_level, verbose=args.verbose)
     if args.fixed_refine_level<0:
         if args.verbose:
             print('Starting regridding masked North Pole')
         # Donut update near the (geographic) north pole
-        dm.regrid_topography_masked(lat_end=np_lat_end, lat_step=np_lat_step, pelayout=pe_p, nprocs=nprocs, tgt_halo=args.tgt_halo, src=src, src_halo=args.src_halo,
+        dm.regrid_topography_masked(lat_end=np_lat_end, lat_step=np_lat_step, pelayout=pe_p, nprocs=nprocs, tgt_halo=args.tgt_halo, eds=eds, src_halo=args.src_halo,
                                     refine_loop_args=refine_options, calc_args=calc_args, hitmap=hm, verbose=args.verbose)
     # Output to a netCDF file
     write_output(dm, args.output, do_center_only=(not args.do_thinwalls), format='NETCDF3_64BIT_OFFSET', history=' '.join(argv))
