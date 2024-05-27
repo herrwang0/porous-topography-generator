@@ -279,7 +279,7 @@ class Domain(ThinWalls.ThinWalls):
                 masks.append((j0, j1, i0, i1))
         return masks
 
-    def create_subdomains(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, offset_lon=True, eds=None, subset_eds=True, src_halo=0,
+    def create_subdomains(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, eds=None, subset_eds=True, src_halo=0,
                           refine_loop_args={}, verbose=False):
         """Creates a list of sub-domains with corresponding source lon, lat and elev sections.
 
@@ -327,7 +327,6 @@ class Domain(ThinWalls.ThinWalls):
                 box_data = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
                 lon = Domain.slice(self.lon, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
                 lat = Domain.slice(self.lat, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
-                if offset_lon: lon = self.offset_halo_lon(lon, (jst, jed, ist, ied), tgt_halo)
 
                 masks = self.find_local_masks((jst, jed, ist, ied), tgt_halo)
                 chunks[pe_j, pe_i] = RefineWrapper(lon=lon, lat=lat, id=(pe_j, pe_i),
@@ -356,8 +355,6 @@ class Domain(ThinWalls.ThinWalls):
         mask_halo = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
         lon = Domain.slice(self.lon, box=mask_halo, cyclic_zonal=False, fold_north=True)
         lat = Domain.slice(self.lat, box=mask_halo, cyclic_zonal=False, fold_north=True)
-
-        lon = self.offset_halo_lon(lon, (jst, jed, ist, ied), tgt_halo)
 
         return Domain(lon=lon, lat=lat, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius)
 
@@ -774,25 +771,6 @@ class Domain(ThinWalls.ThinWalls):
         # print(no_sw.shape, no_so.shape, no_se.shape)
         return numpy.r_[numpy.c_[no_sw, no_so, no_se], numpy.c_[cyc_w, c, cyc_e], numpy.c_[fd_nw, fd_no, fd_ne]]
 
-    def offset_halo_lon(self, lon, box_data, halo):
-        """Offset longitude (corners) for cyclic N-W boundary and folding northern boundary."""
-        jst, jed, ist, ied = box_data
-        nj, ni = lon.shape
-        assert nj==jed-jst+halo*2+1 and ni==ied-ist+halo*2+1, 'offset_halo_lon: indices do not match with lon.'
-        lon_out = lon.copy()
-        if self.reentrant_x:
-            if self.fold_n: # no offset for the northeast and northwest corner blocks.
-                j_end = self.nj-(jst-halo)+1
-            else:
-                j_end = None
-            lon_out[:j_end, :-ni-(ist-halo)] -= 360.0
-            lon_out[:j_end, self.ni-(ist-halo)+1:] += 360.0
-        if self.fold_n:
-            iq1, iq3 = self.ni//4, self.ni//4*3
-            lon_out[self.nj-(jst-halo)+1:, -ni-(ist-halo):max(iq1-(ist-halo),0)] -= 360.0
-            lon_out[self.nj-(jst-halo)+1:, max(iq3-(ist-halo)+1,0):self.ni-(ist-halo)+1] += 360.0
-        return lon_out
-
 def match_edges(edge1, edge2, rfl1, rfl2, tolerance=0, verbose=True, message=''):
     """Check if two edges are identical and if not, return the proper one.
 
@@ -1142,8 +1120,8 @@ def main(argv):
     parser_tgt.add_argument("--lat_tgt", default='y', help='Field name in target grid file for latitude')
     parser_tgt.add_argument("--non-supergrid", action='store_true',
                             help='If specified, the target grid file is not on a supergrid. Currently not supported')
-    parser_tgt.add_argument("--no_mono_lon", action='store_true',
-                            help='If specified, no 360-degree shift will be made to guarantee the last row of lon is monotonic.')
+    parser_tgt.add_argument("--mono_lon", action='store_true',
+                            help='If specified, a 360-degree shift will be made to guarantee the last row of lon is monotonic.')
     parser_tgt.add_argument("--tgt_halo", default=0, type=int, help='Halo size at both directions for target grid subdomain')
 
     parser_src = parser.add_argument_group('Source data')
@@ -1209,7 +1187,7 @@ def main(argv):
         print(  "'"+args.lat_tgt+"'[::2, ::2]", '-> latb_tgt')
     lonb_tgt = netCDF4.Dataset(args.target_grid).variables['x'][::2, ::2].data
     latb_tgt = netCDF4.Dataset(args.target_grid).variables['y'][::2, ::2].data
-    if not args.no_mono_lon:
+    if args.mono_lon:
         for ix in range(lonb_tgt.shape[1]-1):
             if lonb_tgt[-1,ix+1]<lonb_tgt[-1,ix]: lonb_tgt[-1,ix+1] += 360.0
     clock.delta('Read target')
