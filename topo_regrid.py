@@ -974,7 +974,8 @@ def topo_gen_mp(domain_list, nprocs=None, topo_gen_args={}):
 
     return tw_list
 
-def write_output(domain, filename, do_center_only=False, format='NETCDF3_64BIT_OFFSET', history='', description='',
+def write_output(domain, filename, do_center_only=False, do_roughness=False, do_gradient=False,
+                 format='NETCDF3_64BIT_OFFSET', history='', description='',
                  inverse_sign=True, elev_unit='m', dtype=numpy.float64, dtype_int=numpy.int32):
     """Output to netCDF
     """
@@ -1038,7 +1039,6 @@ def write_output(domain, filename, do_center_only=False, format='NETCDF3_64BIT_O
                     long_name='Effective cell-center highest topography')
         write_variable(ncout, signed(domain.c_effective.low), 'c_effective_low', 'c',
                     long_name='Effective cell-center lowest topography')
-
         # u-edges
         write_variable(ncout, signed(domain.u_simple.ave), 'u_simple_ave', 'u',
                     long_name='Simple u-edge mean topography')
@@ -1053,7 +1053,6 @@ def write_output(domain, filename, do_center_only=False, format='NETCDF3_64BIT_O
                     long_name='Effective u-edge highest topography')
         write_variable(ncout, signed(domain.u_effective.low), 'u_effective_low', 'u',
                     long_name='Effective u-edge lowest topography')
-
         # v-edges
         write_variable(ncout, signed(domain.v_simple.ave), 'v_simple_ave', 'v',
                     long_name='Simple v-edge mean topography')
@@ -1068,7 +1067,6 @@ def write_output(domain, filename, do_center_only=False, format='NETCDF3_64BIT_O
                     long_name='Effective v-edge highest topography')
         write_variable(ncout, signed(domain.v_effective.low), 'v_effective_low', 'v',
                     long_name='Effective v-edge lowest topography')
-
         # refinement levels
         write_variable(ncout, domain.c_rfl, 'c_rfl', 'c',
                     long_name='Refinement level at cell-centers', units='nondim', dtype=dtype_int)
@@ -1076,7 +1074,12 @@ def write_output(domain, filename, do_center_only=False, format='NETCDF3_64BIT_O
                     long_name='Refinement level at u-edges', units='nondim', dtype=dtype_int)
         write_variable(ncout, domain.v_rfl, 'v_rfl', 'v',
                     long_name='Refinement level at v-edges', units='nondim', dtype=dtype_int)
-
+    if do_roughness:
+        write_variable(ncout, domain.roughtness, 'h2', 'c',
+                       long_name='Sub-grid plane-fit roughness', units='m2')
+    if do_gradient:
+        write_variable(ncout, domain.gradient, 'gradh', 'c',
+                       long_name='Sub-grid plane-fit gradient', units='m2')
     ncout.description = description
     ncout.history = history
     ncout.close()
@@ -1237,16 +1240,18 @@ def main(argv):
 
     # Create the target grid domain
     dm = Domain(lon=lonb_tgt, lat=latb_tgt, reentrant_x=True, fold_n=True, num_north_pole=2, pole_radius=refine_options['singularity_radius'])
-    hm = None
     if args.save_hits:
         hm = HitMap(lon=lon_src, lat=lat_src, from_cell_center=True)
+    else:
+        hm = None
     clock.delta('Setup')
 
     # Regrid
     if args.verbose:
         print('Starting regridding the domain')
-    bnd_tol_level = args.bnd_tol_level
-    if not args.do_thinwalls:
+    if args.do_thinwalls:
+        bnd_tol_level = args.bnd_tol_level
+    else:
         bnd_tol_level = 0
     # dm.regrid_topography(pelayout=pe, tgt_halo=args.tgt_halo, nprocs=nprocs, eds=eds, src_halo=args.src_halo,
     #                      refine_loop_args=refine_options, calc_args=calc_args, hitmap=hm,
@@ -1260,7 +1265,7 @@ def main(argv):
 
     if nprocs>1:
         twlist = topo_gen_mp(subdomains.flatten(), nprocs=nprocs, topo_gen_args=topo_gen_args)
-    else:
+    else: # with nprocs==1, multiprocessing is not used.
         twlist = [topo_gen(sdm, **topo_gen_args) for sdm in subdomains.flatten()]
 
     if topo_gen_args['save_hits']:
@@ -1279,7 +1284,8 @@ def main(argv):
     clock.delta('Regrid masked')
 
     # Output to a netCDF file
-    write_output(dm, args.output, do_center_only=(not args.do_thinwalls), format='NETCDF3_64BIT_OFFSET', history=' '.join(argv))
+    write_output(dm, args.output, do_center_only=(not args.do_thinwalls), do_roughness=args.do_roughness, do_gradient=args.do_gradient,
+                 format='NETCDF3_64BIT_OFFSET', history=' '.join(argv))
     if args.save_hits:
         write_hitmap(hm, 'hitmap.nc')
     clock.delta('Write output')
