@@ -5,7 +5,8 @@ import multiprocessing
 import functools
 import netCDF4
 import time
-sys.path.insert(0,'./thin-wall-topography/python')
+# sys.path.insert(0,'./thin-wall-topography/python')
+sys.path.insert(0,'/Users/hewang/lib/thin-wall-topography/python')
 import GMesh
 import ThinWalls
 
@@ -114,7 +115,6 @@ class RefineWrapper(GMesh.GMesh):
         """
         super().__init__(lon=lon, lat=lat)
         self.id = id
-        self.lon = self._shift_lon()
         self.north_masks = mask_recs
         self.refine_loop_args = refine_loop_args
         self._fit_src_coords(eds, subset_eds=subset_eds, halo=src_halo)
@@ -140,19 +140,6 @@ class RefineWrapper(GMesh.GMesh):
             for box in self.north_masks:
                 disp.append('  js,je,is,ie: %s, shape: (%i,%i)'%(box, box[1]-box[0], box[3]-box[2]))
         return '\n'.join(disp)
-
-    def _shift_lon(self):
-        """Shift longitude by 360*n so that it is monotonic"""
-        # reflon is a longitude that is faraway enough to ensure normalized self.lon does not have jumps
-        reflon = self.lon.min() + 180.0
-        lon_shift = numpy.mod(self.lon-reflon, 360.0) + reflon
-
-        # North Pole longitude should be within the range of the rest of the domain
-        for jj, ii in self.np_index:
-            if lon_shift[jj, ii]==lon_shift.max() or lon_shift[jj, ii]==lon_shift.min():
-                lon_shift[jj, ii] = numpy.nan
-                lon_shift[jj, ii] = numpy.nanmean(lon_shift)
-        return lon_shift
 
     def _fit_src_coords(self, eds, subset_eds=True, halo=0):
         """Returns the four-element indices of source grid that covers the current domain."""
@@ -279,7 +266,23 @@ class Domain(ThinWalls.ThinWalls):
                 masks.append((j0, j1, i0, i1))
         return masks
 
-    def create_subdomains(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, eds=None, subset_eds=True, src_halo=0,
+    @staticmethod
+    def normlize_longitude(lon, lat):
+        """Shift longitude by 360*n so that it is monotonic (when it is possible)"""
+        # To avoid jumps, the reference longitude should be outside of the domain.
+        # reflon is a best-guess of a reference longitude.
+        reflon = lon[lon.shape[0]//2, lon.shape[1]//2] - 180.0
+        lon_shift = numpy.mod(lon-reflon, 360.0) + reflon
+
+        # North Pole longitude should be within the range of the rest of the domain
+        Jp, Ip = numpy.nonzero(lat==90)
+        for jj, ii in zip(Jp, Ip):
+            if lon_shift[jj, ii]==lon_shift.max() or lon_shift[jj, ii]==lon_shift.min():
+                lon_shift[jj, ii] = numpy.nan
+                lon_shift[jj, ii] = numpy.nanmean(lon_shift)
+        return lon_shift
+
+    def create_subdomains(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, norm_lon=True, eds=None, subset_eds=True, src_halo=0,
                           refine_loop_args={}, verbose=False):
         """Creates a list of sub-domains with corresponding source lon, lat and elev sections.
 
@@ -303,7 +306,6 @@ class Domain(ThinWalls.ThinWalls):
         Out : ndarray
             A 2D array of RefineWrapper objects
         """
-
         if pelayout[1]==1 and tgt_halo>0:
             print('WARNING: only 1 subdomain in i-direction, which may not work with bi-polar cap.')
         if (not x_sym) and self.fold_n:
@@ -327,6 +329,7 @@ class Domain(ThinWalls.ThinWalls):
                 box_data = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
                 lon = Domain.slice(self.lon, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
                 lat = Domain.slice(self.lat, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
+                if norm_lon: lon = Domain.normlize_longitude(lon, lat)
 
                 masks = self.find_local_masks((jst, jed, ist, ied), tgt_halo)
                 chunks[pe_j, pe_i] = RefineWrapper(lon=lon, lat=lat, id=(pe_j, pe_i),
@@ -336,7 +339,7 @@ class Domain(ThinWalls.ThinWalls):
                     print(chunks[pe_j, pe_i], '\n')
         return chunks
 
-    def create_mask_domain(self, mask, tgt_halo=0, pole_radius=0.25):
+    def create_mask_domain(self, mask, tgt_halo=0, norm_lon=True, pole_radius=0.25):
         """Creates a domain for the masked north pole region
 
         Parameters
@@ -355,6 +358,7 @@ class Domain(ThinWalls.ThinWalls):
         mask_halo = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
         lon = Domain.slice(self.lon, box=mask_halo, cyclic_zonal=False, fold_north=True)
         lat = Domain.slice(self.lat, box=mask_halo, cyclic_zonal=False, fold_north=True)
+        if norm_lon: lon = Domain.normlize_longitude(lon, lat)
 
         return Domain(lon=lon, lat=lat, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius)
 
@@ -763,13 +767,13 @@ class Domain(ThinWalls.ThinWalls):
             xsw = xw
             xse = xe
 
-        cyc_w, c, cyc_e = var[yc, xw], var[yc, xc], var[yc, xe]
-        fd_nw, fd_no, fd_ne = var[yn, xnw], var[yn, xn], var[yn, xne]
-        no_sw, no_so, no_se = var[ys, xsw], var[ys, xs], var[ys, xse]
-        # print(fd_nw.shape, fd_no.shape, fd_ne.shape)
-        # print(cyc_w.shape, c.shape, cyc_e.shape)
-        # print(no_sw.shape, no_so.shape, no_se.shape)
-        return numpy.r_[numpy.c_[no_sw, no_so, no_se], numpy.c_[cyc_w, c, cyc_e], numpy.c_[fd_nw, fd_no, fd_ne]]
+        NoWe, North, NoEa = var[yn, xnw], var[yn, xn], var[yn, xne]
+        West, Center, East = var[yc, xw], var[yc, xc], var[yc, xe]
+        SoWe, South, SoEa = var[ys, xsw], var[ys, xs], var[ys, xse]
+        # print(NoWe.shape, North.shape, NoEa.shape)
+        # print(West.shape, Center.shape, East.shape)
+        # print(SoWe.shape, South.shape, SoEa.shape)
+        return numpy.r_[numpy.c_[SoWe, South, SoEa], numpy.c_[West, Center, East], numpy.c_[NoWe, North, NoEa]]
 
 def match_edges(edge1, edge2, rfl1, rfl2, tolerance=0, verbose=True, message=''):
     """Check if two edges are identical and if not, return the proper one.
@@ -847,7 +851,7 @@ def convol( levels, h, f, verbose=False ):
         levels[k].coarsenby2( levels[k-1] )
     return levels[0].height
 
-def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do_effective=True, save_hits=True, verbose=True, timers=False):
+def topo_gen(grid, periodicity=True, do_roughness=False, do_gradient=False, do_thinwalls=False, do_effective=True, save_hits=True, verbose=True, timers=False):
     """The main function for generating topography
 
     Parameters
@@ -861,7 +865,7 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do
     """
 
     if timers: clock = TimeLog(['setup topo_gen', 'refine grid', 'assign data', 'init thinwalls', 'roughness/gradient', 'total',
-                                'refine loop (total)', 'refine loop (effective)', 'refine loop (coarsen)'])
+                                'refine loop (total)', 'refine loop (effective thinwalls)', 'refine loop (coarsen grid)'])
     if verbose:
         print('topo_gen() for domain {:}'.format(grid.id))
 
@@ -908,23 +912,23 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do
             # patho_ew = tw.diagnose_EW_pathway()
             # patho_ns = tw.diagnose_NS_pathway()
             # patho_sw, patho_se, patho_ne, patho_nw = tw.diagnose_corner_pathways()
-            # tw.push_corners(verbose=verbose)
-            # tw.lower_tallest_buttress(verbose=verbose)
-            # # tw.fold_out_central_ridges(er=True, verbose=verbose)
-            # tw.fold_out_central_ridges(verbose=verbose)
-            # tw.invert_exterior_corners(verbose=verbose)
-            # tw.limit_NS_EW_connections(patho_ns, patho_ew, verbose=verbose)
-            # tw.limit_corner_connections(patho_sw, patho_se, patho_ne, patho_nw, verbose=verbose)
+            # tw.push_corners(verbose=False)
+            # tw.lower_tallest_buttress(verbose=False)
+            # # tw.fold_out_central_ridges(er=True, verbose=False)
+            # tw.fold_out_central_ridges(verbose=False)
+            # tw.invert_exterior_corners(verbose=False)
+            # tw.limit_NS_EW_connections(patho_ns, patho_ew, verbose=False)
+            # tw.limit_corner_connections(patho_sw, patho_se, patho_ne, patho_nw, verbose=False)
 
             # new methods
             pathn_s = tw.diagnose_pathways_straight()
             pathn_c = tw.diagnose_pathways_corner()
-            tw.push_interior_corners(adjust_centers=True, verbose=verbose)
-            tw.lower_interior_buttresses(do_ave=True, adjust_mean=False, verbose=verbose)
-            tw.fold_interior_ridges(adjust_centers=True, adjust_low_only=True, verbose=verbose)
-            tw.expand_interior_corners(adjust_centers=True, verbose=verbose)
-            tw.limit_connections(connections=pathn_s, verbose=verbose)
-            tw.limit_connections(connections=pathn_c, verbose=verbose)
+            tw.push_interior_corners(adjust_centers=True, verbose=False)
+            tw.lower_interior_buttresses(do_ave=True, adjust_mean=False, verbose=False)
+            tw.fold_interior_ridges(adjust_centers=True, adjust_low_only=True, verbose=False)
+            tw.expand_interior_corners(adjust_centers=True, verbose=False)
+            tw.limit_connections(connections=pathn_s, verbose=False)
+            tw.limit_connections(connections=pathn_c, verbose=False)
             tw.lift_ave_max()
         if timers: clock.delta('refine loop (effective thinwalls)')
         tw = tw.coarsen(do_thinwalls=do_thinwalls, do_effective=do_effective)
@@ -952,7 +956,9 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do
     tw.id = grid.id
     tw.mrfl = nrfl
 
-    if timers: clock.delta('total')
+    if timers:
+        clock.delta('total')
+        clock.print()
 
     if save_hits: return tw, hits
     else: return tw
@@ -1149,7 +1155,7 @@ def main(argv):
     parser_pe.add_argument("--bnd_tol_level", default=2, type=int, help='Shared boundary treatment strategy')
 
     parser_rgd = parser.add_argument_group('Regrid options')
-    parser_rgd.add_argument("--use_center", action='store_true', help='Use cell centers for nearest neighbor.')
+    parser_rgd.add_argument("--use_corner", action='store_true', help='Use cell corners for nearest neighbor.')
     parser_rgd.add_argument("--fixed_refine_level", default=-1, type=int, help='Force refinement to a specific level.')
     parser_rgd.add_argument("--refine_in_3d", action='store_true', help='If specified, use great circle for grid interpolation.')
     parser_rgd.add_argument("--no_resolution_limit", action='store_true',
@@ -1213,7 +1219,7 @@ def main(argv):
     resolution_limit = (not args.no_resolution_limit) and (args.fixed_refine_level>0)
     if args.fixed_refine_level>0:
         resolution_limit = False
-    refine_options = {'use_center': args.use_center,
+    refine_options = {'use_center': not args.use_corner,
                       'resolution_limit': resolution_limit,
                       'fixed_refine_level': args.fixed_refine_level,
                       'work_in_3d': args.refine_in_3d,
@@ -1242,9 +1248,27 @@ def main(argv):
     bnd_tol_level = args.bnd_tol_level
     if not args.do_thinwalls:
         bnd_tol_level = 0
-    dm.regrid_topography(pelayout=pe, tgt_halo=args.tgt_halo, nprocs=nprocs, eds=eds, src_halo=args.src_halo,
-                         refine_loop_args=refine_options, calc_args=calc_args, hitmap=hm,
-                         bnd_tol_level=bnd_tol_level, verbose=args.verbose)
+    # dm.regrid_topography(pelayout=pe, tgt_halo=args.tgt_halo, nprocs=nprocs, eds=eds, src_halo=args.src_halo,
+    #                      refine_loop_args=refine_options, calc_args=calc_args, hitmap=hm,
+    #                      bnd_tol_level=bnd_tol_level, verbose=args.verbose)
+    subdomains = dm.create_subdomains(pelayout=pe, tgt_halo=args.tgt_halo, eds=eds, subset_eds=False, src_halo=args.src_halo,
+                                      refine_loop_args=refine_options, verbose=False)
+    # clock.delta('Domain decomposition')
+
+    topo_gen_args = calc_args.copy()
+    topo_gen_args.update({'save_hits': not (hm is None), 'verbose': True, 'timers': True})
+
+    if nprocs>1:
+        twlist = topo_gen_mp(subdomains.flatten(), nprocs=nprocs, topo_gen_args=topo_gen_args)
+    else:
+        twlist = [topo_gen(sdm, **topo_gen_args) for sdm in subdomains.flatten()]
+
+    if topo_gen_args['save_hits']:
+        twlist, hitlist = zip(*twlist)
+        hm.stitch_hits(hitlist)
+
+    dm.stitch_subdomains(twlist, tolerance=bnd_tol_level, verbose=args.verbose, **calc_args)
+
     clock.delta('Regrid main')
     if args.fixed_refine_level<0:
         if args.verbose:
