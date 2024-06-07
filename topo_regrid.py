@@ -851,7 +851,7 @@ def convol( levels, h, f, verbose=False ):
         levels[k].coarsenby2( levels[k-1] )
     return levels[0].height
 
-def topo_gen(grid, periodicity=True, do_roughness=False, do_gradient=False, do_thinwalls=False, do_effective=True, save_hits=True, verbose=True, timers=False):
+def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do_effective=True, save_hits=True, verbose=True, timers=False):
     """The main function for generating topography
 
     Parameters
@@ -947,7 +947,7 @@ def topo_gen(grid, periodicity=True, do_roughness=False, do_gradient=False, do_t
         HY = convol( levels, h, Y ) # mean of h * y
         if do_roughness:
             H2 = convol( levels, h, h ) # mean of h^2
-            tw.roughness = H2 - tw.c_simple.ave**2 - HX - HY + h2min
+            tw.roughness = H2 - tw.c_simple.ave**2 - HX**2 - HY**2 + h2min
         if do_gradient:
             tw.gradient = numpy.sqrt(HX**2 + HY**2)
     if timers: clock.delta("roughness/gradient")
