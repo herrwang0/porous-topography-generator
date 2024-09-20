@@ -5,8 +5,7 @@ import multiprocessing
 import functools
 import netCDF4
 import time
-# sys.path.insert(0,'./thin-wall-topography/python')
-sys.path.insert(0,'/Users/hewang/lib/thin-wall-topography/python')
+sys.path.insert(0,'./thin-wall-topography/python')
 import GMesh
 import ThinWalls
 
@@ -162,7 +161,7 @@ class RefineWrapper(GMesh.GMesh):
 class Domain(ThinWalls.ThinWalls):
     """A container for regrided topography
     """
-    def __init__(self, lon=None, lat=None, reentrant_x=False, fold_n=False, num_north_pole=0, pole_radius=0.25):
+    def __init__(self, lon=None, lat=None, Idx=None, Idy=None, reentrant_x=False, fold_n=False, num_north_pole=0, pole_radius=0.25):
         """
         Parameters
         ----------
@@ -182,6 +181,7 @@ class Domain(ThinWalls.ThinWalls):
         verbose : bool
         """
         super().__init__(lon=lon, lat=lat)
+        self.Idx, self.Idy = Idx, Idy
 
         self.reentrant_x = reentrant_x
         self.fold_n = fold_n
@@ -335,6 +335,18 @@ class Domain(ThinWalls.ThinWalls):
                 chunks[pe_j, pe_i] = RefineWrapper(lon=lon, lat=lat, id=(pe_j, pe_i),
                                                    eds=eds, subset_eds=subset_eds, src_halo=src_halo,
                                                    mask_recs=masks, refine_loop_args=refine_loop_args)
+                if self.Idx is not None:
+                    Idx = Domain.slice(self.Idx, box=box_data, position='center',
+                                      cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
+                else:
+                    Idx = None
+                if self.Idy is not None:
+                    Idy = Domain.slice(self.Idy, box=box_data, position='center',
+                                      cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
+                else:
+                    Idy = None
+                chunks[pe_j, pe_i].Idx, chunks[pe_j, pe_i].Idy = Idx, Idy
+
                 if verbose:
                     print(chunks[pe_j, pe_i], '\n')
         return chunks
@@ -360,7 +372,15 @@ class Domain(ThinWalls.ThinWalls):
         lat = Domain.slice(self.lat, box=mask_halo, cyclic_zonal=False, fold_north=True)
         if norm_lon: lon = Domain.normlize_longitude(lon, lat)
 
-        return Domain(lon=lon, lat=lat, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius)
+        Idx, Idy = None, None
+        if self.Idx is not None:
+            Idx = Domain.slice(self.Idx, box=mask_halo, position='center',
+                              cyclic_zonal=False, fold_north=True)
+        if self.Idy is not None:
+            Idy = Domain.slice(self.Idy, box=mask_halo, position='center',
+                              cyclic_zonal=False, fold_north=True)
+
+        return Domain(lon=lon, lat=lat, Idx=Idx, Idy=Idy, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius)
 
     def stitch_subdomains(self, thinwalls_list, tolerance=0, do_thinwalls=True, do_effective=True,
                           do_roughness=False, do_gradient=False, verbose=True):
@@ -851,7 +871,7 @@ def convol( levels, h, f, verbose=False ):
         levels[k].coarsenby2( levels[k-1] )
     return levels[0].height
 
-def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do_effective=True, save_hits=True, verbose=True, timers=False):
+def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, tw_interp='max', do_effective=True, save_hits=True, verbose=True, timers=False):
     """The main function for generating topography
 
     Parameters
@@ -894,7 +914,7 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do
     if use_center:
         tw.set_cell_mean(levels[-1].height)
         if do_thinwalls:
-            tw.set_edge_to_step()
+            tw.set_edge_to_step(tw_interp)
     else:
         tw.set_center_from_corner(levels[-1].height)
         if do_thinwalls:
@@ -949,7 +969,7 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, do
             H2 = convol( levels, h, h ) # mean of h^2
             tw.roughness = H2 - tw.c_simple.ave**2 - HX**2 - HY**2 + h2min
         if do_gradient:
-            tw.gradient = numpy.sqrt(HX**2 + HY**2)
+            tw.gradient = numpy.sqrt( (HX*grid.Idx)**2 + (HY*grid.Idy)**2)
     if timers: clock.delta("roughness/gradient")
 
     # Step 3: Decorate the coarsened ThinWalls object
@@ -1075,7 +1095,7 @@ def write_output(domain, filename, do_center_only=False, do_roughness=False, do_
         write_variable(ncout, domain.v_rfl, 'v_rfl', 'v',
                     long_name='Refinement level at v-edges', units='nondim', dtype=dtype_int)
     if do_roughness:
-        write_variable(ncout, domain.roughtness, 'h2', 'c',
+        write_variable(ncout, domain.roughness, 'h2', 'c',
                        long_name='Sub-grid plane-fit roughness', units='m2')
     if do_gradient:
         write_variable(ncout, domain.gradient, 'gradh', 'c',
@@ -1132,6 +1152,7 @@ def main(argv):
     parser_tgt.add_argument("--mono_lon", action='store_true',
                             help='If specified, a 360-degree shift will be made to guarantee the last row of lon is monotonic.')
     parser_tgt.add_argument("--tgt_halo", default=0, type=int, help='Halo size at both directions for target grid subdomain')
+    parser_tgt.add_argument("--tgt_regional", action='store_true', help='If true, target grid is regional rather than global.')
 
     parser_src = parser.add_argument_group('Source data')
     parser_src.add_argument("--source", default='', help='File name of the source data')
@@ -1145,9 +1166,10 @@ def main(argv):
 
     parser_cc = parser.add_argument_group('Calculation options')
     parser_cc.add_argument("--do_thinwalls", action='store_true', help='Calculate thin wall paraemeters')
-    parser_cc.add_argument("--do_thinwalls_effective", action='store_true', help='Calcuate effective depth in porous topography.')
-    parser_cc.add_argument("--do_roughness", action='store_true', help='Calcuate roughness')
-    parser_cc.add_argument("--do_gradient", action='store_true', help='Calcuate sub-grid gradient')
+    parser_cc.add_argument("--thinwalls_interp", default='max', help='Interpolation method for getting thin walls.')
+    parser_cc.add_argument("--do_thinwalls_effective", action='store_true', help='Calculate effective depth in porous topography.')
+    parser_cc.add_argument("--do_roughness", action='store_true', help='Calculate roughness')
+    parser_cc.add_argument("--do_gradient", action='store_true', help='Calculate sub-grid gradient')
     parser_cc.add_argument("--save_hits", action='store_true', help='Save hitmap to a file')
 
     parser_pe = parser.add_argument_group('Parallelism options')
@@ -1199,6 +1221,21 @@ def main(argv):
     if args.mono_lon:
         for ix in range(lonb_tgt.shape[1]-1):
             if lonb_tgt[-1,ix+1]<lonb_tgt[-1,ix]: lonb_tgt[-1,ix+1] += 360.0
+    if args.do_gradient:
+        dxs = netCDF4.Dataset(args.target_grid).variables['dx'][:].data
+        dys = netCDF4.Dataset(args.target_grid).variables['dy'][:].data
+        dx = dxs[1::2,::2] + dxs[1::2,1::2]
+        dy = dys[::2,1::2] + dys[1::2,1::2]
+        Idx, Idy = 1.0/dx, 1.0/dy
+        Idx[dx==0.0], Idy[dy==0.0] = 0.0, 0.0
+    else:
+        Idx, Idy = None, None
+    if args.tgt_regional:
+        tgt_reentrant_x = False
+        tgt_fold_n = False
+    else:
+        tgt_reentrant_x = True
+        tgt_fold_n = True
     clock.delta('Read target')
 
     # Domain decomposition
@@ -1219,7 +1256,7 @@ def main(argv):
     north_pole_lat = args.pole_start
     np_lat_end = args.pole_end
     np_lat_step = args.pole_step
-    resolution_limit = (not args.no_resolution_limit) and (args.fixed_refine_level>0)
+    resolution_limit = (not args.no_resolution_limit) and (args.fixed_refine_level<0)
     if args.fixed_refine_level>0:
         resolution_limit = False
     refine_options = {'use_center': not args.use_corner,
@@ -1239,7 +1276,8 @@ def main(argv):
         print('np_lat_step: ', np_lat_step)
 
     # Create the target grid domain
-    dm = Domain(lon=lonb_tgt, lat=latb_tgt, reentrant_x=True, fold_n=True, num_north_pole=2, pole_radius=refine_options['singularity_radius'])
+    dm = Domain(lon=lonb_tgt, lat=latb_tgt, Idx=Idx, Idy=Idy, reentrant_x=tgt_reentrant_x,
+                fold_n=tgt_fold_n, num_north_pole=2, pole_radius=refine_options['singularity_radius'])
     if args.save_hits:
         hm = HitMap(lon=lon_src, lat=lat_src, from_cell_center=True)
     else:
@@ -1261,7 +1299,7 @@ def main(argv):
     # clock.delta('Domain decomposition')
 
     topo_gen_args = calc_args.copy()
-    topo_gen_args.update({'save_hits': not (hm is None), 'verbose': True, 'timers': True})
+    topo_gen_args.update({'tw_interp': args.thinwalls_interp, 'save_hits': not (hm is None), 'verbose': True, 'timers': True})
 
     if nprocs>1:
         twlist = topo_gen_mp(subdomains.flatten(), nprocs=nprocs, topo_gen_args=topo_gen_args)
