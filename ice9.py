@@ -1,7 +1,6 @@
 def ice9it(lon, lat, depth, dc=0):
     """
-    Modified "ice 9" from MOM6-examples/ice_ocean_SIS2/OM4_025/preprocessing
-/ice9.py
+    Modified "ice 9" from MOM6-examples/ice_ocean_SIS2/OM4_025/preprocessing/ice9.py
 
     lon, lat : coordinates
     Depth : positive for land and negative for ocean

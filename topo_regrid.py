@@ -1099,7 +1099,7 @@ def write_output(domain, filename, do_center_only=False, do_roughness=False, do_
                        long_name='Sub-grid plane-fit roughness', units='m2')
     if do_gradient:
         write_variable(ncout, domain.gradient, 'gradh', 'c',
-                       long_name='Sub-grid plane-fit gradient', units='m2')
+                       long_name='Sub-grid plane-fit gradient', units='nondim')
     ncout.description = description
     ncout.history = history
     ncout.close()
@@ -1294,7 +1294,7 @@ def main(argv):
     # dm.regrid_topography(pelayout=pe, tgt_halo=args.tgt_halo, nprocs=nprocs, eds=eds, src_halo=args.src_halo,
     #                      refine_loop_args=refine_options, calc_args=calc_args, hitmap=hm,
     #                      bnd_tol_level=bnd_tol_level, verbose=args.verbose)
-    subdomains = dm.create_subdomains(pelayout=pe, tgt_halo=args.tgt_halo, eds=eds, subset_eds=False, src_halo=args.src_halo,
+    subdomains = dm.create_subdomains(pelayout=pe, tgt_halo=args.tgt_halo, eds=eds, subset_eds=True, src_halo=args.src_halo,
                                       refine_loop_args=refine_options, verbose=False)
     # clock.delta('Domain decomposition')
 
