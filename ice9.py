@@ -1,4 +1,4 @@
-def ice9it(lon, lat, depth, dc=0):
+def ice9it(depth, start=None, lon=None, lat=None, dc=0):
     """
     Modified "ice 9" from MOM6-examples/ice_ocean_SIS2/OM4_025/preprocessing/ice9.py
 
@@ -9,11 +9,14 @@ def ice9it(lon, lat, depth, dc=0):
     wetMask = 0*depth
     (nj, ni) = wetMask.shape
 
-    # Point Nemo
-    lon0, lat0 = -123.39333, -48.876667
-    idx = (((lon-lon0)%360)**2 + (lat-lat0)**2).argmin()
-    iy, ix = idx//ni, idx%ni
-    print('Starting location (lon, lat, depth)', (lon[iy,ix], lat[iy,ix], depth[iy,ix]))
+    if start is None:
+        # Point Nemo
+        lon0, lat0 = -123.39333, -48.876667
+        idx = (((lon-lon0)%360)**2 + (lat-lat0)**2).argmin()
+        iy, ix = idx//ni, idx%ni
+        print('Starting location (lon, lat, depth)', (lon[iy,ix], lat[iy,ix], depth[iy,ix]))
+    else:
+        iy, ix = start
 
     stack = set()
     stack.add( (iy,ix) )
