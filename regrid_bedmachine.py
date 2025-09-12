@@ -53,7 +53,7 @@ def do_work(grid, output, history):
     lonb = ncds(fnt)['x'][::2,::2]
     latb = ncds(fnt)['y'][::2,::2]
 
-    jj, ii = np.nonzero(latb<=-60)
+    jj, _ = np.nonzero(latb<=-60)
     Je = jj.max()
     print(Je, latb[Je, 0])
 
