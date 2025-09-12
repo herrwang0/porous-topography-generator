@@ -5,9 +5,8 @@ import multiprocessing
 import functools
 import netCDF4
 import time
-sys.path.insert(0,'./thin-wall-topography/python')
-import GMesh
-import ThinWalls
+from thinwall.python import GMesh
+from thinwall.python import ThinWalls
 
 class TimeLog(object):
     """An object logging times"""
