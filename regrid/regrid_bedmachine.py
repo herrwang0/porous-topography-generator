@@ -68,7 +68,7 @@ def do_work(grid, output, history):
     print('full model nj,ni=',fullG.nj, fullG.ni)
 
     # Source
-    fn = './bedmachine/BedMachineAntarctica-v3.nc'
+    fn = '/work5/h1w/topo/bedmachine/BedMachineAntarctica-v3.nc'
     x = ncds(fn).variables['x'][:]
     y = ncds(fn).variables['y'][:]
     xb = np.r_[1.5*x[0]-0.5*x[1], (x[1:]+x[:-1])*0.5, 1.5*x[-1] - 0.5*x[-2]]
@@ -120,6 +120,8 @@ def do_work(grid, output, history):
 def main(argv):
     parser = argparse.ArgumentParser(description='Ice cap thickness',
                                      formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument("--source", default='', help='source file dir')
+    parser.add_argument("--src_file", default='BedMachineAntarctica-v3.nc', help='source file name')
     parser.add_argument("--grid", default='', help='target grid file name')
     parser.add_argument("--output", default='', help='target grid name')
     args = parser.parse_args(argv)
