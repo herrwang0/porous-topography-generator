@@ -5,8 +5,8 @@ import multiprocessing
 import functools
 import netCDF4
 import time
-from thinwall.python import GMesh
-from thinwall.python import ThinWalls
+from external.thinwall.python import GMesh
+from external.thinwall.python import ThinWalls
 
 class TimeLog(object):
     """An object logging times"""

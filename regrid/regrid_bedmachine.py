@@ -2,8 +2,8 @@ import argparse
 import sys
 import numpy as np
 from netCDF4 import Dataset as ncds
-from nsidc0756.ll2xy import ll2xy
-from thinwall.python import GMesh
+from external.nsidc0756.ll2xy import ll2xy
+from external.thinwall.python import GMesh
 from topo_regrid import Domain
 
 def do_work(grid, output, history):

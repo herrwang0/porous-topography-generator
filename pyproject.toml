@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "porous-topography-generator"
+version = "0.1.0"
+description = "regridding topography tools"
+authors = [{ name = "He Wang", email = "hewang@ucar.edu" }]
+readme = "README.md"
+license = { text = "MIT" }
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["regrid*"]
