@@ -2,13 +2,8 @@ import argparse
 import sys
 import numpy as np
 from netCDF4 import Dataset as ncds
-
-sys.path.insert(0,'./nsidc0756-scripts/')
-from ll2xy import ll2xy
-
-sys.path.insert(0,'./porous-topography-generator/thin-wall-topography/python/')
-sys.path.insert(0,'./porous-topography-generator')
-import GMesh
+from nsidc0756.ll2xy import ll2xy
+from thinwall.python import GMesh
 from topo_regrid import Domain
 
 def do_work(grid, output, history):
