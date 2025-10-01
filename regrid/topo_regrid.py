@@ -1191,7 +1191,7 @@ def main(argv):
     parser_out = parser.add_argument_group('Output options')
     parser_out.add_argument("--output", default='')
 
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv[1:])
 
     clock = TimeLog(['Read source', 'Read target', 'Setup', 'Regrid main', 'Regrid masked', 'Write output'])
     # Read source data
@@ -1330,4 +1330,4 @@ def main(argv):
     clock.print()
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    main(sys.argv)
