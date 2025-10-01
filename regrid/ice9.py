@@ -1,7 +1,7 @@
 import sys
 import argparse
 import numpy as np
-from netCDF4 import Dataset as ncds
+import netCDF4
 from pathlib import Path
 
 def ice9it(depth, start=None, lon=None, lat=None, dc=0):
@@ -68,7 +68,7 @@ def main(argv):
         print('Generate file ', file_out)
         print('    from ', args.file_in)
 
-    ncsrc = ncds(args.file_in, 'r')
+    ncsrc = netCDF4.Dataset(args.file_in, 'r')
     depth = ncsrc[args.var_in][:]
     ny, nx = depth.shape
 
@@ -88,7 +88,7 @@ def main(argv):
         print('  New topography has {:} out of {:} wet points.'.format(wet.sum(), ny*nx))
 
     # write
-    ncout = ncds(file_out, 'w')
+    ncout = netCDF4.Dataset(file_out, 'w')
 
     for name, dimension in ncsrc.dimensions.items():
         ncout.createDimension(name, (len(dimension) if not dimension.isunlimited() else None))
