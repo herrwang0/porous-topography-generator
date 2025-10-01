@@ -1,12 +1,14 @@
 import argparse
 import sys
 import numpy as np
-from netCDF4 import Dataset as ncds
+import netCDF4
 from external.nsidc0756.ll2xy import ll2xy
 from external.thinwall.python import GMesh
 from topo_regrid import Domain
 
-def do_work(grid, output, history):
+def do_work(source_file, grid_file, output, history):
+    # source_file = '/work5/h1w/topo/bedmachine/BedMachineAntarctica-v3.nc'
+    # grid_file = '/work/h1w/grid/tides/' + grid
     ddomain = Domain.decompose_domain
 
     def coarsen( levels, eds, verbose=False ):
@@ -44,9 +46,8 @@ def do_work(grid, output, history):
         return Htarg
 
     # Target
-    fnt = '/work/h1w/grid/tides/' + grid
-    lonb = ncds(fnt)['x'][::2,::2]
-    latb = ncds(fnt)['y'][::2,::2]
+    lonb = netCDF4.Dataset(grid_file)['x'][::2,::2]
+    latb = netCDF4.Dataset(grid_file)['y'][::2,::2]
 
     jj, _ = np.nonzero(latb<=-60)
     Je = jj.max()
@@ -68,9 +69,8 @@ def do_work(grid, output, history):
     print('full model nj,ni=',fullG.nj, fullG.ni)
 
     # Source
-    fn = './bedmachine/BedMachineAntarctica-v3.nc'
-    x = ncds(fn).variables['x'][:]
-    y = ncds(fn).variables['y'][:]
+    x = netCDF4.Dataset(source_file)['x'][:]
+    y = netCDF4.Dataset(source_file)['y'][:]
     xb = np.r_[1.5*x[0]-0.5*x[1], (x[1:]+x[:-1])*0.5, 1.5*x[-1] - 0.5*x[-2]]
     yb = np.r_[1.5*y[0]-0.5*y[1], (y[1:]+y[:-1])*0.5, 1.5*y[-1] - 0.5*y[-2]]
 
@@ -80,11 +80,11 @@ def do_work(grid, output, history):
     eds = GMesh.UniformEDS()
     eds.lon_coord, eds.lat_coord = xcoord, ycoord
 
-    thk = ncds(fn).variables['thickness'][:]
-    sfc = ncds(fn).variables['surface'][:]
-    bed = ncds(fn).variables['bed'][:]
-    mask = ncds(fn).variables['mask'][:]
-    geoid = ncds(fn).variables['geoid'][:]
+    thk = netCDF4.Dataset(source_file)['thickness'][:]
+    sfc = netCDF4.Dataset(source_file)['surface'][:]
+    bed = netCDF4.Dataset(source_file)['bed'][:]
+    mask  = netCDF4.Dataset(source_file)['mask'][:]
+    geoid = netCDF4.Dataset(source_file)['geoid'][:]
 
     # Fuse ice surface and topography
     bedpice = bed.copy()
@@ -103,7 +103,7 @@ def do_work(grid, output, history):
 
     fn = output
     # fn = './ice_thickness_below_sfc_'+grid_name +'_bmv3.nc'
-    ncout = ncds(fn, 'w')
+    ncout = netCDF4.Dataset(fn, 'w')
     ncout.createDimension('nx', nx)
     ncout.createDimension('ny', ny)
 
@@ -120,10 +120,11 @@ def do_work(grid, output, history):
 def main(argv):
     parser = argparse.ArgumentParser(description='Ice cap thickness',
                                      formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument("--grid", default='', help='target grid file name')
-    parser.add_argument("--output", default='', help='target grid name')
-    args = parser.parse_args(argv)
+    parser.add_argument("--source", default='', help='File name of the source data')
+    parser.add_argument("--target_grid", default='', help='File name of the target grid')
+    parser.add_argument("--output", default='', help='File name of the output')
+    args = parser.parse_args(argv[1:])
 
-    do_work(args.grid, args.output, ' '.join(argv))
+    do_work(args.source, args.target_grid, args.output, ' '.join(argv))
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    main(sys.argv)

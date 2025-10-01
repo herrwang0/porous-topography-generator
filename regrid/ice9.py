@@ -1,7 +1,7 @@
 import sys
 import argparse
 import numpy as np
-from netCDF4 import Dataset as ncds
+import netCDF4
 from pathlib import Path
 
 def ice9it(depth, start=None, lon=None, lat=None, dc=0):
@@ -46,8 +46,12 @@ def main(argv):
     parser.add_argument("--file_out", default=None, help='output file')
     parser.add_argument("--var_in", default='depth')
     parser.add_argument("--var_out", default=None)
+    parser.add_argument("--starting_point", nargs=2, type=int, default=None, help='Staring point (J,I)')
     parser.add_argument("--flood_depth", default=0.0, type=float, help='elevation (positive above sea level) cutoff')
+    parser.add_argument("-q", "--quiet", action='store_true')
     args = parser.parse_args(argv[1:])
+
+    verbose = not args.quiet
 
     if args.var_out is None:
         var_out = args.var_in
@@ -60,14 +64,31 @@ def main(argv):
     else:
         file_out = args.file_out
 
-    depth = ncds(args.file_in)[args.var_in][:]
+    if verbose:
+        print('Generate file ', file_out)
+        print('    from ', args.file_in)
+
+    ncsrc = netCDF4.Dataset(args.file_in, 'r')
+    depth = ncsrc[args.var_in][:]
     ny, nx = depth.shape
-    wet = ice9it(-depth, start=(ny//2, nx//2), dc=args.flood_depth)
+
+    if args.starting_point is None:
+        starting_point = (ny//2, nx//2)
+    else:
+        starting_point = args.starting_point
+
+    if verbose:
+        print('  Starting point (j,i): ', starting_point)
+        print('  Wet depth: ', -args.flood_depth)
+
+    wet = ice9it(-depth, start=starting_point, dc=args.flood_depth)
     depth[wet==0] = -args.flood_depth
 
+    if verbose:
+        print('  New topography has {:} out of {:} wet points.'.format(wet.sum(), ny*nx))
+
     # write
-    ncsrc = ncds(args.file_in, 'r')
-    ncout = ncds(file_out, 'w')
+    ncout = netCDF4.Dataset(file_out, 'w')
 
     for name, dimension in ncsrc.dimensions.items():
         ncout.createDimension(name, (len(dimension) if not dimension.isunlimited() else None))
@@ -87,6 +108,9 @@ def main(argv):
     ncout.history = ' '.join(argv)
     ncout.close()
     ncsrc.close()
+
+    if verbose:
+        print('Done ice9')
 
 if __name__ == "__main__":
     main(sys.argv)
