@@ -1,7 +1,7 @@
-[submodule "thinwall"]
+[submodule "regrid/external/thinwall"]
 	path = regrid/external/thinwall
-	url = https://github.com/herrwang0/thin-wall-topography
+	url = https://github.com/herrwang0/thin-wall-topography.git
 	branch = stereographic
-[submodule "nsidc0756"]
+[submodule "regrid/external/nsidc0756"]
 	path = regrid/external/nsidc0756
 	url = https://github.com/nsidc/nsidc0756-scripts
