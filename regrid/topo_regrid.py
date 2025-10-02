@@ -1034,6 +1034,9 @@ def write_output(domain, filename, do_center_only=False, do_roughness=False, do_
     ncout.createDimension('nxq', nx+1)
     ncout.createDimension('nyq', ny+1)
 
+    varout = ncout.createVariable('nx', numpy.float64, ('nx',)); varout.cartesian_axis = 'X'
+    varout = ncout.createVariable('ny', numpy.float64, ('ny',)); varout.cartesian_axis = 'Y'
+
     if do_center_only:
         write_variable(ncout, signed(domain.c_simple.ave), 'depth', 'c',
                     long_name='Simple cell-center mean topography')
