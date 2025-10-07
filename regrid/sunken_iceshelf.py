@@ -2,7 +2,7 @@ import sys
 import numpy as np
 import argparse
 from netCDF4 import Dataset as ncds
-from regrid.ice9 import ice9it
+from regrid.ice9 import ice9it, mask_uv
 
 def copy_var(src, dst, varname, value):
     src_var = src.variables[varname]
@@ -14,7 +14,7 @@ def copy_var(src, dst, varname, value):
 
 def sunken_Antarctica_iceshelf(file_topoice, file_topobed, file_icethick, file_out,
                                var_topoice='c_simple_ave', var_topobed='c_simple_ave', var_icethick='thk_ice',
-                               file_subgrid=None, inverse_depth=True, flood_depth=None, dmask_subgrid=999, history=''):
+                               file_subgrid=None, inverse_depth=True, flood_depth=None, dmask_subgrid=-9999, history=''):
     """Add Antarctica iceshelf thickness to bed topography """
 
     if inverse_depth:
@@ -39,26 +39,15 @@ def sunken_Antarctica_iceshelf(file_topoice, file_topobed, file_icethick, file_o
 
         # variable names are hard-coded for now...
         csh, csa, csl = ncds(file_subgrid)['c_simple_hgh'][:], ncds(file_subgrid)['c_simple_ave'][:], ncds(file_subgrid)['c_simple_low'][:]
-        ush, usa, usl = -ncds(file_subgrid)['u_simple_hgh'][:], -ncds(file_subgrid)['u_simple_ave'][:], -ncds(file_subgrid)['u_simple_low'][:]
-        vsh, vsa, vsl = -ncds(file_subgrid)['v_simple_hgh'][:], -ncds(file_subgrid)['v_simple_ave'][:], -ncds(file_subgrid)['v_simple_low'][:]
+        ush, usa, usl = ncds(file_subgrid)['u_simple_hgh'][:], ncds(file_subgrid)['u_simple_ave'][:], ncds(file_subgrid)['u_simple_low'][:]
+        vsh, vsa, vsl = ncds(file_subgrid)['v_simple_hgh'][:], ncds(file_subgrid)['v_simple_ave'][:], ncds(file_subgrid)['v_simple_low'][:]
 
         # ueh, uea, uel = -ncds(fn_depeff)['u_effective_hgh'][:], -ncds(fn_depeff)['u_effective_ave'][:], -ncds(fn_depeff)['u_effective_low'][:]
         # veh, vea, vel = -ncds(fn_depeff)['v_effective_hgh'][:], -ncds(fn_depeff)['v_effective_ave'][:], -ncds(fn_depeff)['v_effective_low'][:]
 
         # Mask porous barriers and media where iceshelf is sunken
-        maskc = np.full_like(csa, dtype=np.bool_, fill_value=False)
-        masku = np.full_like(usa, dtype=np.bool_, fill_value=False)
-        maskv = np.full_like(vsa, dtype=np.bool_, fill_value=False)
-
-        maskc[thk_ice>0] = True
-
-        masku[:,1:-1] = (maskc[:,1:] | maskc[:,:-1])
-        masku[:,0] = (maskc[:,0] | maskc[:,-1])
-        masku[:,-1] = masku[:,0]
-
-        maskv[1:-1,:] = (maskc[1:,:] | maskc[:-1,:])
-        maskv[0,:] = maskc[0,:]
-        maskv[-1,:] = maskc[-1,:]
+        maskc = (thk_ice>0)
+        masku, maskv = mask_uv(~maskc, reentrant_x=True, fold_n=True, to_mask=True)
 
         csa = topo_ice_sunken
         csh[maskc] = csa[maskc]
