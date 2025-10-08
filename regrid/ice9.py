@@ -126,7 +126,11 @@ def main(argv):
         var_out = args.var_out
 
     if args.file_out is None:
-        mask_str = 'msk_{:0.0f}m'.format(-args.flood_depth).replace('-', 'm')
+        # mask_str = 'msk_{:0.0f}m'.format(-args.flood_depth).replace('-', 'm')
+        if args.flood_depth<=0:
+            mask_str = 'msk_{:0.0f}m'.format(np.abs(args.flood_depth))
+        else:
+            mask_str = 'msk_m{:0.0f}m'.format(args.flood_depth)
         file_out = Path(args.file_in).stem + '_' + mask_str + '.nc'
     else:
         file_out = args.file_out

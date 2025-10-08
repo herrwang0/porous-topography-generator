@@ -20,11 +20,11 @@ def sunken_Antarctica_iceshelf(file_topoice, file_topobed, file_icethick, file_o
 
     # iceshelf
     thk_ice = ncds(file_icethick)[var_icethick][:]
-    ny_ice = (thk_ice.max(axis=1)==0).argmax()
+    ny_ice = np.max(np.nonzero(thk_ice.max(axis=1))) if np.any(thk_ice.max(axis=1)) else -1
 
     # New topography
     topo_ice_sunken = topo_ice.copy()
-    topo_ice_sunken[:ny_ice,:] = topo_bed[:ny_ice,:] + depth_to_elev * thk_ice[:ny_ice,:]
+    topo_ice_sunken[:ny_ice+1,:] = topo_bed[:ny_ice+1,:] + depth_to_elev * thk_ice[:ny_ice+1,:]
 
     # Mask sub-grid
     if file_subgrid is not None:
