@@ -4,7 +4,15 @@ import numpy as np
 import netCDF4
 from pathlib import Path
 
-def ice9it(depth, start=None, lon=None, lat=None, dc=0, to_mask=False, to_float=True):
+def copy_var(src, dst, varname, value):
+    src_var = src.variables[varname]
+    dst_var = dst.createVariable(varname, src_var.dtype, src_var.dimensions)
+
+    # Copy attributes
+    dst_var.setncatts({attr: src_var.getncattr(attr) for attr in src_var.ncattrs()})
+    dst_var[:] = value
+
+def ice9it(depth, start=None, lon=None, lat=None, dc=0, to_mask=False, to_float=False):
     """
     Modified "ice 9" from MOM6-examples/ice_ocean_SIS2/OM4_025/preprocessing/ice9.py
 
@@ -54,8 +62,8 @@ def ice9it(depth, start=None, lon=None, lat=None, dc=0, to_mask=False, to_float=
         if j<nj-1: stack.add( (j+1,i) )
         else: stack.add( (j,ni-1-i) )
 
-    if to_mask: wetmask = ~wetmask
-    if to_float: wetmask = np.double(wetmask)
+    if to_mask: wetMask = ~wetMask
+    if to_float: wetMask = np.double(wetMask)
     return wetMask
 
 def mask_uv(wet, reentrant_x=True, fold_n=True, to_mask=False, to_float=False):
@@ -99,12 +107,14 @@ def mask_uv(wet, reentrant_x=True, fold_n=True, to_mask=False, to_float=False):
 def main(argv):
     parser = argparse.ArgumentParser(description='Flood and mask topography',
                                      formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument("--file_in", default='', help='topo file')
-    parser.add_argument("--file_out", default=None, help='output file')
-    parser.add_argument("--var_in", default='depth')
-    parser.add_argument("--var_out", default=None)
-    parser.add_argument("--starting_point", nargs=2, type=int, default=None, help='Staring point (J,I)')
-    parser.add_argument("--flood_depth", default=0.0, type=float, help='elevation (positive above sea level) cutoff')
+    parser.add_argument("--file-in", default='', help='topo file')
+    parser.add_argument("--file-out", default=None, help='output file')
+    parser.add_argument("--var-in", default='depth')
+    parser.add_argument("--var-out", default=None)
+    parser.add_argument("--starting-point", nargs=2, type=int, default=None, help='Staring point (J,I)')
+    parser.add_argument("--flood-depth", default=0.0, type=float, help='elevation (positive above sea level) cutoff')
+    parser.add_argument("--mask-value", default=None, type=float, help='depth at dry points')
+    parser.add_argument("--do-subgrid", action='store_true', help='mask subgrid topography')
     parser.add_argument("-q", "--quiet", action='store_true')
     args = parser.parse_args(argv[1:])
 
@@ -120,6 +130,11 @@ def main(argv):
         file_out = Path(args.file_in).stem + '_' + mask_str + '.nc'
     else:
         file_out = args.file_out
+
+    if args.mask_value is None:
+        mask_value = -args.flood_depth
+    else:
+        mask_value = args.mask_value
 
     if verbose:
         print('Generate file ', file_out)
@@ -138,29 +153,57 @@ def main(argv):
         print('  Starting point (j,i): ', starting_point)
         print('  Wet depth: ', -args.flood_depth)
 
-    wet = ice9it(-depth, start=starting_point, dc=args.flood_depth, to_float=True)
-    depth[wet==0] = -args.flood_depth
+    maskc = ice9it(-depth, start=starting_point, dc=args.flood_depth, to_mask=True, to_float=False)
+
+    if args.do_subgrid:
+        masku, maskv = mask_uv(~maskc, reentrant_x=True, fold_n=True, to_mask=True, to_float=False)
+        csh, csa, csl = ncsrc['c_simple_hgh'][:], ncsrc['c_simple_ave'][:], ncsrc['c_simple_low'][:]
+        ush, usa, usl = ncsrc['u_simple_hgh'][:], ncsrc['u_simple_ave'][:], ncsrc['u_simple_low'][:]
+        vsh, vsa, vsl = ncsrc['v_simple_hgh'][:], ncsrc['v_simple_ave'][:], ncsrc['v_simple_low'][:]
+
+        csa[maskc], csh[maskc], csl[maskc] = mask_value, mask_value, mask_value
+        ush[masku], usa[masku], usl[masku] = mask_value, mask_value, mask_value
+        vsh[maskv], vsa[maskv], vsl[maskv] = mask_value, mask_value, mask_value
+    else:
+        depth[maskc] = mask_value
 
     if verbose:
-        print('  New topography has {:} out of {:} wet points.'.format(wet.sum(), ny*nx))
+        print('  New topography has {:} out of {:} wet points.'.format(ny*nx-maskc.sum(), ny*nx))
 
     # write
     ncout = netCDF4.Dataset(file_out, 'w')
-
     for name, dimension in ncsrc.dimensions.items():
         ncout.createDimension(name, (len(dimension) if not dimension.isunlimited() else None))
 
-    varout = ncout.createVariable('wet', np.int16, ('ny','nx'))
-    varout[:] = wet
-    varout.long_name = 'Values: 1=Ocean, 0=Land'
-
-    varout = ncout.createVariable(var_out, np.float64, ('ny','nx'))
-    varout[:] = depth
-    varout.units = ncsrc[args.var_in].units
-    varout.long_name = ncsrc[args.var_in].long_name
-
     varout = ncout.createVariable('nx', np.float64, ('nx',)); varout.cartesian_axis = 'X'
     varout = ncout.createVariable('ny', np.float64, ('ny',)); varout.cartesian_axis = 'Y'
+
+    varout = ncout.createVariable('wet', np.int16, ('ny','nx'))
+    varout[:] = np.double(~maskc)
+    varout.long_name = 'Values: 1=Ocean, 0=Land'
+
+    if args.do_subgrid:
+        varout = ncout.createVariable('wetu', np.int16, ('ny','nxq'))
+        varout[:] = np.double(~masku)
+        varout.long_name = 'Values: 1=Ocean, 0=Land'
+
+        varout = ncout.createVariable('wetv', np.int16, ('nyq','nx'))
+        varout[:] = np.double(~maskv)
+        varout.long_name = 'Values: 1=Ocean, 0=Land'
+
+        vars = {'c_simple_hgh': csh,
+                'c_simple_ave': csa,
+                'c_simple_low': csl,
+                'u_simple_hgh': ush,
+                'u_simple_ave': usa,
+                'u_simple_low': usl,
+                'v_simple_hgh': vsh,
+                'v_simple_ave': vsa,
+                'v_simple_low': vsl}
+        for vnm, val in vars.items():
+            copy_var(ncsrc, ncout, vnm, val)
+    else:
+        copy_var(ncsrc, ncout, var_out, depth)
 
     ncout.history = ' '.join(argv)
     ncout.close()

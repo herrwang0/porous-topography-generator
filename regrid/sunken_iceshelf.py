@@ -2,15 +2,7 @@ import sys
 import numpy as np
 import argparse
 from netCDF4 import Dataset as ncds
-from regrid.ice9 import ice9it, mask_uv
-
-def copy_var(src, dst, varname, value):
-    src_var = src.variables[varname]
-    dst_var = dst.createVariable(varname, src_var.dtype, src_var.dimensions)
-
-    # Copy attributes
-    dst_var.setncatts({attr: src_var.getncattr(attr) for attr in src_var.ncattrs()})
-    dst_var[:] = value
+from regrid.ice9 import ice9it, mask_uv, copy_var
 
 def sunken_Antarctica_iceshelf(file_topoice, file_topobed, file_icethick, file_out,
                                var_topoice='c_simple_ave', var_topobed='c_simple_ave', var_icethick='thk_ice',
