@@ -115,6 +115,9 @@ def main(argv):
     parser.add_argument("--flood-depth", default=0.0, type=float, help='elevation (positive above sea level) cutoff')
     parser.add_argument("--mask-value", default=None, type=float, help='depth at dry points')
     parser.add_argument("--do-subgrid", action='store_true', help='mask subgrid topography')
+    parser.add_argument("--subgrid-c-var", action="extend", nargs="+", type=str, default=[])
+    parser.add_argument("--subgrid-u-var", action="extend", nargs="+", type=str, default=[])
+    parser.add_argument("--subgrid-v-var", action="extend", nargs="+", type=str, default=[])
     parser.add_argument("-q", "--quiet", action='store_true')
     args = parser.parse_args(argv[1:])
 
@@ -161,13 +164,39 @@ def main(argv):
 
     if args.do_subgrid:
         masku, maskv = mask_uv(~maskc, reentrant_x=True, fold_n=True, to_mask=True, to_float=False)
-        csh, csa, csl = ncsrc['c_simple_hgh'][:], ncsrc['c_simple_ave'][:], ncsrc['c_simple_low'][:]
-        ush, usa, usl = ncsrc['u_simple_hgh'][:], ncsrc['u_simple_ave'][:], ncsrc['u_simple_low'][:]
-        vsh, vsa, vsl = ncsrc['v_simple_hgh'][:], ncsrc['v_simple_ave'][:], ncsrc['v_simple_low'][:]
 
-        csa[maskc], csh[maskc], csl[maskc] = mask_value, mask_value, mask_value
-        ush[masku], usa[masku], usl[masku] = mask_value, mask_value, mask_value
-        vsh[maskv], vsa[maskv], vsl[maskv] = mask_value, mask_value, mask_value
+        cvar = dict().fromkeys(args.subgrid_c_var)
+        uvar = dict().fromkeys(args.subgrid_u_var)
+        vvar = dict().fromkeys(args.subgrid_v_var)
+
+        for vname in args.subgrid_c_var:
+            if vname not in ncsrc.variables:
+                print('  Warning: subgrid cell variable {:} not found in {:}, skip.'.format(vname, args.file_in))
+                continue
+            cvar[vname] = ncsrc[vname][:]
+            cvar[vname][maskc] = mask_value
+
+        for vname in args.subgrid_u_var:
+            if vname not in ncsrc.variables:
+                print('  Warning: subgrid u variable {:} not found in {:}, skip.'.format(vname, args.file_in))
+                continue
+            uvar[vname] = ncsrc[vname][:]
+            uvar[vname][masku] = mask_value
+
+        for vname in args.subgrid_v_var:
+            if vname not in ncsrc.variables:
+                print('  Warning: subgrid v variable {:} not found in {:}, skip.'.format(vname, args.file_in))
+                continue
+            vvar[vname] = ncsrc[vname][:]
+            vvar[vname][maskv] = mask_value
+
+        # csh, csa, csl = ncsrc['c_simple_hgh'][:], ncsrc['c_simple_ave'][:], ncsrc['c_simple_low'][:]
+        # ush, usa, usl = ncsrc['u_simple_hgh'][:], ncsrc['u_simple_ave'][:], ncsrc['u_simple_low'][:]
+        # vsh, vsa, vsl = ncsrc['v_simple_hgh'][:], ncsrc['v_simple_ave'][:], ncsrc['v_simple_low'][:]
+
+        # csa[maskc], csh[maskc], csl[maskc] = mask_value, mask_value, mask_value
+        # ush[masku], usa[masku], usl[masku] = mask_value, mask_value, mask_value
+        # vsh[maskv], vsa[maskv], vsl[maskv] = mask_value, mask_value, mask_value
     else:
         depth[maskc] = mask_value
 
@@ -195,15 +224,7 @@ def main(argv):
         varout[:] = np.double(~maskv)
         varout.long_name = 'Values: 1=Ocean, 0=Land'
 
-        vars = {'c_simple_hgh': csh,
-                'c_simple_ave': csa,
-                'c_simple_low': csl,
-                'u_simple_hgh': ush,
-                'u_simple_ave': usa,
-                'u_simple_low': usl,
-                'v_simple_hgh': vsh,
-                'v_simple_ave': vsa,
-                'v_simple_low': vsl}
+        vars = cvar | uvar | vvar
         for vnm, val in vars.items():
             copy_var(ncsrc, ncout, vnm, val)
     else:
