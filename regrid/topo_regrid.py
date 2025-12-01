@@ -7,6 +7,7 @@ import netCDF4
 import time
 from external.thinwall.python import GMesh
 from external.thinwall.python import ThinWalls
+from roughness import subgrid_roughness_gradient
 
 class TimeLog(object):
     """An object logging times"""
@@ -862,14 +863,6 @@ def match_edges(edge1, edge2, rfl1, rfl2, tolerance=0, verbose=True, message='')
             print(message+' have the same edge but different refinement levels '+str_rfls+'.')
         return edge1
 
-def convol( levels, h, f, verbose=False ):
-    """Coarsens the product of h*f across all levels"""
-    levels[-1].height = ( h * f ).reshape(levels[-1].nj,levels[-1].ni)
-    for k in range( len(levels) - 1, 0, -1 ):
-        if verbose: print('Coarsening {} -> {}'.format(k,k-1))
-        levels[k].coarsenby2( levels[k-1] )
-    return levels[0].height
-
 def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, tw_interp='max', do_effective=True, save_hits=True, verbose=True, timers=False):
     """The main function for generating topography
 
@@ -955,20 +948,9 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, tw
         if timers: clock.delta('refine loop (coarsen grid)')
     if timers: clock.delta('refine loop (total)', ref_time=loop_start)
 
-    if do_roughness or do_gradient:
-        h2min=1.e-7
-        nx = 2**( len(levels) - 1 )
-        x = ( numpy.arange(nx) - ( nx - 1 ) /2 ) * numpy.sqrt( 12 / ( nx**2 - 1 ) ) # This formula satisfies <x>=0 and <x^2>=1
-        X, Y = numpy.meshgrid( x, x )
-        X, Y = X.reshape(1,nx,1,nx), Y.reshape(1,nx,1,nx)
-        h = levels[-1].height.reshape(levels[0].nj,nx,levels[0].ni,nx)
-        HX = convol( levels, h, X ) # mean of h * x
-        HY = convol( levels, h, Y ) # mean of h * y
-        if do_roughness:
-            H2 = convol( levels, h, h ) # mean of h^2
-            tw.roughness = H2 - tw.c_simple.ave**2 - HX**2 - HY**2 + h2min
-        if do_gradient:
-            tw.gradient = numpy.sqrt( (HX*grid.Idx)**2 + (HY*grid.Idy)**2)
+    out = subgrid_roughness_gradient(
+        levels, tw.c_simple.ave, do_roughness=do_roughness, do_gradient=do_gradient, Idx=grid.Idx, Idy=grid.Idy)
+    tw.roughness, tw.gradient = out['h2'], out['gh']
     if timers: clock.delta("roughness/gradient")
 
     # Step 3: Decorate the coarsened ThinWalls object

@@ -4,4 +4,4 @@
 	branch = stereographic
 [submodule "regrid/external/nsidc0756"]
 	path = regrid/external/nsidc0756
-	url = https://github.com/nsidc/nsidc0756-scripts
+	url = https://github.com/nsidc/nsidc0756-scripts.git
