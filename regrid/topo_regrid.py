@@ -1140,6 +1140,7 @@ def main(argv):
 
     parser_src = parser.add_argument_group('Source data')
     parser_src.add_argument("--source", default='', help='File name of the source data')
+    parser_src.add_argument("--coord_source", default='', help='File name of the source coordinate (can be different from source)')
     parser_src.add_argument("--lon_src", default='lon', help='Field name in source file for longitude')
     parser_src.add_argument("--lat_src", default='lat', help='Field name in source file for latitude')
     parser_src.add_argument("--src_halo", default=0, type=int, help='Halo size of at both directions for subsetting source data')
@@ -1185,8 +1186,12 @@ def main(argv):
         print(  "'"+args.lon_src+"'", '-> lon_src')
         print(  "'"+args.lat_src+"'", '-> lat_src')
         print(  "'"+args.elev+"'", '-> elev')
-    lon_src = netCDF4.Dataset(args.source)[args.lon_src][:]
-    lat_src = netCDF4.Dataset(args.source)[args.lat_src][:]
+    if args.coord_source:
+        coord_source = args.coord_source
+    else:
+        coord_source = args.source
+    lon_src = netCDF4.Dataset(coord_source)[args.lon_src][:]
+    lat_src = netCDF4.Dataset(coord_source)[args.lat_src][:]
     elev = netCDF4.Dataset(args.source)[args.elev][:]
     if args.remove_src_repeat_lon:
         lon_src = lon_src[:-1]
