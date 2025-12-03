@@ -8,6 +8,7 @@ import time
 from external.thinwall.python import GMesh
 from external.thinwall.python import ThinWalls
 from roughness import subgrid_roughness_gradient
+from write_files import write_output, write_hitmap
 
 class TimeLog(object):
     """An object logging times"""
@@ -71,6 +72,7 @@ class HitMap(GMesh.GMesh):
     def pcolormesh(self, axis, **kwargs):
         """Plots hit map"""
         return axis.pcolormesh( self.lon, self.lat, self[:,:], **kwargs )
+
 class RefineWrapper(GMesh.GMesh):
     """A wrapper for grid refinement (of a subdomain)
 
@@ -79,7 +81,7 @@ class RefineWrapper(GMesh.GMesh):
 
     print(self) offers a detailed overlook of the target and source grid information.
     """
-    def __init__(self, lon=None, lat=None, id=(0,0),
+    def __init__(self, lon=None, lat=None, id=(0,0), is_geo_coord=True,
                  eds=None, subset_eds=False, src_halo=0, mask_recs=[], refine_loop_args={}):
         """
         Parameters
@@ -112,28 +114,31 @@ class RefineWrapper(GMesh.GMesh):
             verbose : bool, optional
                 Verbose opition for GMesh.refine_loop()
         """
-        super().__init__(lon=lon, lat=lat)
+        super().__init__(lon=lon, lat=lat, is_geo_coord=is_geo_coord)
         self.id = id
         self.north_masks = mask_recs
         self.refine_loop_args = refine_loop_args
         self._fit_src_coords(eds, subset_eds=subset_eds, halo=src_halo)
 
     def __str__(self):
-        disp = [str(type(self)),
-                "Sub-domain identifier: {}".format(self.id),
-                "Target grid size (nj ni): ({:9d}, {:9d})".format( self.nj, self.ni ),
-                "Source grid size (nj ni): ({:9d}, {:9d}), indices: {}".format( self.eds.nj, self.eds.ni,
-                                                                               (self.eds.lat_coord.start, self.eds.lat_coord.stop,
-                                                                                self.eds.lon_coord.start, self.eds.lon_coord.stop) ),
-                ("Target grid range (lat lon): "+
-                 "({:10.6f}, {:10.6f})  ({:10.6f}, {:10.6f})").format( self.lat.min(), self.lat.max(),
-                                                                       numpy.mod(self.lon.min(), 360),
-                                                                       numpy.mod(self.lon.max(), 360) ),
-                ("Source grid range (lat lon): "+
-                 "({:10.6f}, {:10.6f})  ({:10.6f}, {:10.6f})").format( self.eds.lat_coord.bounds[0], self.eds.lat_coord.bounds[-1],
-                                                                       numpy.mod(self.eds.lon_coord.bounds[0], 360),
-                                                                       numpy.mod(self.eds.lon_coord.bounds[-1], 360) )
-               ]
+        if self.is_geo_coord:
+            coord_name = 'lat lon'
+            tgt_lonmin, tgt_lonmax = numpy.mod(self.lon.min(), 360), numpy.mod(self.lon.max(), 360)
+            src_lonmin, src_lonmax = numpy.mod(self.eds.lon_coord.bounds[0], 360), numpy.mod(self.eds.lon_coord.bounds[-1], 360)
+        else:
+            coord_name = 'y x'
+            tgt_lonmin, tgt_lonmax = self.lon.min(), self.lon.max()
+            src_lonmin, src_lonmax = self.eds.lon_coord.bounds[0], self.eds.lon_coord.bounds[-1]
+        disp = [
+            str(type(self)),
+            f'Sub-domain identifier: {self.id}',
+            f'Geographic coordinate? {self.is_geo_coord}',
+            f'Target grid size (nj ni): ({self.nj}, {self.ni})',
+            f'Source grid size (nj ni): ({self.eds.nj:9d}, {self.eds.ni:9d}) ' + \
+            f'indices: {(self.eds.lat_coord.start, self.eds.lat_coord.stop, self.eds.lon_coord.start, self.eds.lon_coord.stop)}',
+            f'Target grid range ({coord_name}): [{self.lat.min():10.6f}, {self.lat.max():10.6f}], [{tgt_lonmin:10.6f}, {tgt_lonmax:10.6f}]',
+            f'Source grid range ({coord_name}): [{self.eds.lat_coord.bounds[0]:10.6f}, {self.eds.lat_coord.bounds[-1]:10.6f}], [{src_lonmin:10.6f}, {src_lonmax:10.6f}]'
+        ]
         if len(self.north_masks)>0:
             disp.append('North Pole rectangles: ')
             for box in self.north_masks:
@@ -161,7 +166,7 @@ class RefineWrapper(GMesh.GMesh):
 class Domain(ThinWalls.ThinWalls):
     """A container for regrided topography
     """
-    def __init__(self, lon=None, lat=None, Idx=None, Idy=None, reentrant_x=False, fold_n=False, num_north_pole=0, pole_radius=0.25):
+    def __init__(self, lon=None, lat=None, Idx=None, Idy=None, is_geo_coord=True, reentrant_x=False, fold_n=False, num_north_pole=0, pole_radius=0.25):
         """
         Parameters
         ----------
@@ -180,7 +185,7 @@ class Domain(ThinWalls.ThinWalls):
             b) ignore the hits in source grid
         verbose : bool
         """
-        super().__init__(lon=lon, lat=lat)
+        super().__init__(lon=lon, lat=lat, is_geo_coord=is_geo_coord)
         self.Idx, self.Idy = Idx, Idy
 
         self.reentrant_x = reentrant_x
@@ -193,10 +198,18 @@ class Domain(ThinWalls.ThinWalls):
         self.north_mask = self.find_north_pole_rectangles(num_north_pole=num_north_pole)
 
     def __str__(self):
-        disp = [str(type(self)),
-                "Domain size (nj ni): (%i, %i)"%(self.nj, self.ni),
-                "Domain range (lat lon): (%10.6f, %10.6f)  (%10.6f, %10.6f)"%(self.lat.min(), self.lat.max(), numpy.mod(self.lon.min(), 360), numpy.mod(self.lon.max(), 360))
-               ]
+        if self.is_geo_coord:
+            coord_name = 'lat lon'
+            lonmin, lonmax = numpy.mod(self.lon.min(), 360), numpy.mod(self.lon.max(), 360)
+        else:
+            coord_name = 'y x'
+            lonmin, lonmax = self.lon.min(), self.lon.max()
+        disp = [
+            str(type(self)),
+            f'Geographic coordinate? {self.is_geo_coord}',
+            f'Domain size (nj ni): ({self.nj}, {self.ni})',
+            f'Domain range ({coord_name}): [{self.lat.min():10.6f}, {self.lat.max():10.6f}], [{lonmin:10.6f}, {lonmax:10.6f}]'
+        ]
         if len(self.north_mask)>0:
             disp.append('North Pole rectangles (radius =%5.2f%1s)'%(self.pole_radius, chr(176)))
             for box in self.north_mask:
@@ -282,7 +295,7 @@ class Domain(ThinWalls.ThinWalls):
                 lon_shift[jj, ii] = numpy.nanmean(lon_shift)
         return lon_shift
 
-    def create_subdomains(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, norm_lon=True, eds=None, subset_eds=True, src_halo=0,
+    def create_subdomains(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, norm_lon=None, eds=None, subset_eds=True, src_halo=0,
                           refine_loop_args={}, verbose=False):
         """Creates a list of sub-domains with corresponding source lon, lat and elev sections.
 
@@ -306,6 +319,8 @@ class Domain(ThinWalls.ThinWalls):
         Out : ndarray
             A 2D array of RefineWrapper objects
         """
+        if norm_lon is None: norm_lon = self.is_geo_coord
+
         if pelayout[1]==1 and tgt_halo>0:
             print('WARNING: only 1 subdomain in i-direction, which may not work with bi-polar cap.')
         if (not x_sym) and self.fold_n:
@@ -332,7 +347,7 @@ class Domain(ThinWalls.ThinWalls):
                 if norm_lon: lon = Domain.normlize_longitude(lon, lat)
 
                 masks = self.find_local_masks((jst, jed, ist, ied), tgt_halo)
-                chunks[pe_j, pe_i] = RefineWrapper(lon=lon, lat=lat, id=(pe_j, pe_i),
+                chunks[pe_j, pe_i] = RefineWrapper(lon=lon, lat=lat, id=(pe_j, pe_i), is_geo_coord=self.is_geo_coord,
                                                    eds=eds, subset_eds=subset_eds, src_halo=src_halo,
                                                    mask_recs=masks, refine_loop_args=refine_loop_args)
                 if self.Idx is not None:
@@ -975,152 +990,6 @@ def topo_gen_mp(domain_list, nprocs=None, topo_gen_args={}):
 
     return tw_list
 
-def write_output(domain, filename, do_center_only=False, do_roughness=False, do_gradient=False,
-                 format='NETCDF3_64BIT_OFFSET', history='', description='',
-                 inverse_sign=True, elev_unit='m', dtype=numpy.float64, dtype_int=numpy.int32):
-    """Output to netCDF
-    """
-    # def clip(field, clip_height=clip_height, positive=(not inverse_sign)):
-    #     if isinstance(clip_height, float):
-    #         field[field>clip_height] = clip_height
-    #     return (float(positive)*2-1)*field
-    def signed(field, positive=(not inverse_sign)):
-        return (float(positive)*2-1)*field
-
-    def write_variable(nc, field, field_name, field_dim, units=elev_unit, long_name=' ', dtype=dtype):
-        if field_dim == 'c':
-            dim = ('ny', 'nx')
-        elif field_dim == 'u':
-            dim = ('ny', 'nxq')
-        elif field_dim == 'v':
-            dim = ('nyq', 'nx')
-        else: raise Exception('Wrong field dimension.')
-        varout = nc.createVariable(field_name, dtype, dim)
-        varout[:] = field
-        varout.units = units
-        varout.long_name = long_name
-
-    if description=='':
-        # if do_mean_only:
-        #     description = "Mean topography at cell-centers"
-        if do_center_only:
-            description = "Min, mean and max elevation at cell-centers"
-        else:
-            description = "Min, mean and max elevation at cell-centers and u/v-edges"
-
-    ny, nx = domain.shape
-
-    ncout = netCDF4.Dataset(filename, mode='w', format=format)
-    ncout.createDimension('nx', nx)
-    ncout.createDimension('ny', ny)
-    ncout.createDimension('nxq', nx+1)
-    ncout.createDimension('nyq', ny+1)
-
-    varout = ncout.createVariable('nx', numpy.float64, ('nx',)); varout.cartesian_axis = 'X'
-    varout = ncout.createVariable('ny', numpy.float64, ('ny',)); varout.cartesian_axis = 'Y'
-
-    if do_center_only:
-        write_variable(ncout, signed(domain.c_simple.ave), 'depth', 'c',
-                    long_name='Simple cell-center mean topography')
-        write_variable(ncout, signed(domain.c_simple.hgh), 'depth_hgh', 'c',
-                    long_name='Simple cell-center highest topography')
-        write_variable(ncout, signed(domain.c_simple.low), 'depth_low', 'c',
-                    long_name='Simple cell-center lowest topography')
-        write_variable(ncout, domain.c_rfl, 'c_rfl', 'c',
-                    long_name='Refinement level at cell-centers', units='nondim', dtype=dtype_int)
-    else:
-        # cell-centers
-        write_variable(ncout, signed(domain.c_simple.ave), 'c_simple_ave', 'c',
-                    long_name='Simple cell-center mean topography')
-        write_variable(ncout, signed(domain.c_simple.hgh), 'c_simple_hgh', 'c',
-                    long_name='Simple cell-center highest topography')
-        write_variable(ncout, signed(domain.c_simple.low), 'c_simple_low', 'c',
-                    long_name='Simple cell-center lowest topography')
-
-        write_variable(ncout, signed(domain.c_effective.ave), 'c_effective_ave', 'c',
-                    long_name='Effective cell-center mean topography')
-        write_variable(ncout, signed(domain.c_effective.hgh), 'c_effective_hgh', 'c',
-                    long_name='Effective cell-center highest topography')
-        write_variable(ncout, signed(domain.c_effective.low), 'c_effective_low', 'c',
-                    long_name='Effective cell-center lowest topography')
-        # u-edges
-        write_variable(ncout, signed(domain.u_simple.ave), 'u_simple_ave', 'u',
-                    long_name='Simple u-edge mean topography')
-        write_variable(ncout, signed(domain.u_simple.hgh), 'u_simple_hgh', 'u',
-                    long_name='Simple u-edge highest topography')
-        write_variable(ncout, signed(domain.u_simple.low), 'u_simple_low', 'u',
-                    long_name='Simple u-edge lowest topography')
-
-        write_variable(ncout, signed(domain.u_effective.ave), 'u_effective_ave', 'u',
-                    long_name='Effective u-edge mean topography')
-        write_variable(ncout, signed(domain.u_effective.hgh), 'u_effective_hgh', 'u',
-                    long_name='Effective u-edge highest topography')
-        write_variable(ncout, signed(domain.u_effective.low), 'u_effective_low', 'u',
-                    long_name='Effective u-edge lowest topography')
-        # v-edges
-        write_variable(ncout, signed(domain.v_simple.ave), 'v_simple_ave', 'v',
-                    long_name='Simple v-edge mean topography')
-        write_variable(ncout, signed(domain.v_simple.hgh), 'v_simple_hgh', 'v',
-                    long_name='Simple v-edge highest topography')
-        write_variable(ncout, signed(domain.v_simple.low), 'v_simple_low', 'v',
-                    long_name='Simple v-edge lowest topography')
-
-        write_variable(ncout, signed(domain.v_effective.ave), 'v_effective_ave', 'v',
-                    long_name='Effective v-edge mean topography')
-        write_variable(ncout, signed(domain.v_effective.hgh), 'v_effective_hgh', 'v',
-                    long_name='Effective v-edge highest topography')
-        write_variable(ncout, signed(domain.v_effective.low), 'v_effective_low', 'v',
-                    long_name='Effective v-edge lowest topography')
-        # refinement levels
-        write_variable(ncout, domain.c_rfl, 'c_rfl', 'c',
-                    long_name='Refinement level at cell-centers', units='nondim', dtype=dtype_int)
-        write_variable(ncout, domain.u_rfl, 'u_rfl', 'u',
-                    long_name='Refinement level at u-edges', units='nondim', dtype=dtype_int)
-        write_variable(ncout, domain.v_rfl, 'v_rfl', 'v',
-                    long_name='Refinement level at v-edges', units='nondim', dtype=dtype_int)
-    if do_roughness:
-        write_variable(ncout, domain.roughness, 'h2', 'c',
-                       long_name='Sub-grid plane-fit roughness', units='m2')
-    if do_gradient:
-        write_variable(ncout, domain.gradient, 'gradh', 'c',
-                       long_name='Sub-grid plane-fit gradient', units='nondim')
-    ncout.description = description
-    ncout.history = history
-    ncout.close()
-
-def write_hitmap(hitmap, filename, format='NETCDF3_64BIT_OFFSET', history='', description='', dtype=numpy.int32):
-    """Output to netCDF
-    """
-    if description=='':
-        description = 'Map of "hits" of the source data'
-
-    ny, nx = hitmap.shape
-
-    ncout = netCDF4.Dataset(filename, mode='w', format=format)
-    ncout.createDimension('nx', nx)
-    ncout.createDimension('ny', ny)
-    ncout.createDimension('nxq', nx+1)
-    ncout.createDimension('nyq', ny+1)
-
-    varout = ncout.createVariable('hitmap', dtype, ('ny','nx'))
-    varout[:] = hitmap[:]
-    varout.units = 'nondim'
-    varout.long_name = '>0 source data is used; 0 not'
-
-    varout = ncout.createVariable('lat', numpy.float64, ('nyq',))
-    varout[:] = hitmap.lat[:,0]
-    varout.units = 'degree'
-    varout.long_name = 'Latitude at the nodes'
-
-    varout = ncout.createVariable('lon', numpy.float64, ('nxq',))
-    varout[:] = hitmap.lon[0,:]
-    varout.units = 'degree'
-    varout.long_name = 'Longitude at the nodes'
-
-    ncout.description = description
-    ncout.history = history
-    ncout.close()
-
 def main(argv):
     parser = argparse.ArgumentParser(description='Objective topography regridding',
                                      formatter_class=argparse.RawTextHelpFormatter)
@@ -1150,7 +1019,8 @@ def main(argv):
                                   'Elevation along that longitude will be the mean.'))
 
     parser_cc = parser.add_argument_group('Calculation options')
-    parser_cc.add_argument("--do_thinwalls", action='store_true', help='Calculate thin wall paraemeters')
+    parser_cc.add_argument("--mean-only", action='store_true', help='Output cell-mean topography only')
+    parser_cc.add_argument("--do_thinwalls", action='store_true', help='Calculate thin wall parameters')
     parser_cc.add_argument("--thinwalls_interp", default='max', help='Interpolation method for getting thin walls.')
     parser_cc.add_argument("--do_thinwalls_effective", action='store_true', help='Calculate effective depth in porous topography.')
     parser_cc.add_argument("--do_roughness", action='store_true', help='Calculate roughness')
@@ -1311,7 +1181,14 @@ def main(argv):
     clock.delta('Regrid masked')
 
     # Output to a netCDF file
-    write_output(dm, args.output, do_center_only=(not args.do_thinwalls), do_roughness=args.do_roughness, do_gradient=args.do_gradient,
+    if args.mean_only:
+        mode = 'mean'
+    elif not args.do_thinwalls:
+        mode = 'center'
+    else:
+        mode = 'all'
+    write_output(dm, args.output, mode=mode, do_effective=args.do_thinwalls_effective, output_refine=True,
+                 do_roughness=args.do_roughness, do_gradient=args.do_gradient,
                  format='NETCDF3_64BIT_OFFSET', history=' '.join(argv))
     if args.save_hits:
         write_hitmap(hm, 'hitmap.nc')

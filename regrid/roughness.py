@@ -51,9 +51,6 @@ def subgrid_roughness_gradient(levels, depth, do_roughness=True, do_gradient=Tru
     if do_roughness:
         H2 = convol( levels, h, h ) # mean of h^2
         out['h2'] =  H2 - depth**2 - HX**2 - HY**2 + h2min
-        print('output roughness')
-
     if do_gradient and (Idx and Idy):
         out['gh'] = numpy.sqrt( (HX*Idx)**2 + (HY*Idy)**2)
-        print('output gradient')
     return out
