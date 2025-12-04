@@ -9,7 +9,7 @@ from external.thinwall.python import GMesh
 from external.thinwall.python import ThinWalls
 from roughness import subgrid_roughness_gradient
 from output_utils import write_output, write_hitmap
-from tile_utils import slice_array, decompose_domain
+from tile_utils import slice_array, decompose_domain, normlize_longitude
 
 class TimeLog(object):
     """An object logging times"""
@@ -280,22 +280,6 @@ class Domain(ThinWalls.ThinWalls):
                 masks.append((j0, j1, i0, i1))
         return masks
 
-    @staticmethod
-    def normlize_longitude(lon, lat):
-        """Shift longitude by 360*n so that it is monotonic (when it is possible)"""
-        # To avoid jumps, the reference longitude should be outside of the domain.
-        # reflon is a best-guess of a reference longitude.
-        reflon = lon[lon.shape[0]//2, lon.shape[1]//2] - 180.0
-        lon_shift = numpy.mod(lon-reflon, 360.0) + reflon
-
-        # North Pole longitude should be within the range of the rest of the domain
-        Jp, Ip = numpy.nonzero(lat==90)
-        for jj, ii in zip(Jp, Ip):
-            if lon_shift[jj, ii]==lon_shift.max() or lon_shift[jj, ii]==lon_shift.min():
-                lon_shift[jj, ii] = numpy.nan
-                lon_shift[jj, ii] = numpy.nanmean(lon_shift)
-        return lon_shift
-
     def create_subdomains(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, norm_lon=None, eds=None, subset_eds=True, src_halo=0,
                           refine_loop_args={}, verbose=False):
         """Creates a list of sub-domains with corresponding source lon, lat and elev sections.
@@ -345,7 +329,7 @@ class Domain(ThinWalls.ThinWalls):
                 box_data = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
                 lon = slice_array(self.lon, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
                 lat = slice_array(self.lat, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
-                if norm_lon: lon = Domain.normlize_longitude(lon, lat)
+                if norm_lon: lon = normlize_longitude(lon, lat)
 
                 masks = self.find_local_masks((jst, jed, ist, ied), tgt_halo)
                 chunks[pe_j, pe_i] = RefineWrapper(lon=lon, lat=lat, id=(pe_j, pe_i), is_geo_coord=self.is_geo_coord,
@@ -386,7 +370,7 @@ class Domain(ThinWalls.ThinWalls):
         mask_halo = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
         lon = slice_array(self.lon, box=mask_halo, cyclic_zonal=False, fold_north=True)
         lat = slice_array(self.lat, box=mask_halo, cyclic_zonal=False, fold_north=True)
-        if norm_lon: lon = Domain.normlize_longitude(lon, lat)
+        if norm_lon: lon = normlize_longitude(lon, lat)
 
         Idx, Idy = None, None
         if self.Idx is not None:

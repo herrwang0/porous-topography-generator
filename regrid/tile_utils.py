@@ -143,3 +143,18 @@ def decompose_domain(N, nd, symmetric=False):
             dn[nd//2-res//2:nd//2+res//2+1] += 1
             if (res%2==0): dn[nd//2] -= 1
     return numpy.array([(ist, ied) for ist, ied in zip(numpy.r_[0, numpy.cumsum(dn)[:-1]],numpy.cumsum(dn))], dtype='i,i')
+
+def normlize_longitude(lon, lat):
+    """Shift longitude by 360*n so that it is monotonic (when it is possible)"""
+    # To avoid jumps, the reference longitude should be outside of the domain.
+    # reflon is a best-guess of a reference longitude.
+    reflon = lon[lon.shape[0]//2, lon.shape[1]//2] - 180.0
+    lon_shift = numpy.mod(lon-reflon, 360.0) + reflon
+
+    # North Pole longitude should be within the range of the rest of the domain
+    Jp, Ip = numpy.nonzero(lat==90)
+    for jj, ii in zip(Jp, Ip):
+        if lon_shift[jj, ii]==lon_shift.max() or lon_shift[jj, ii]==lon_shift.min():
+            lon_shift[jj, ii] = numpy.nan
+            lon_shift[jj, ii] = numpy.nanmean(lon_shift)
+    return lon_shift
