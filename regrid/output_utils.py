@@ -1,3 +1,9 @@
+"""
+output_utils.py
+
+Pure helper functions for creating files
+"""
+
 import numpy
 import netCDF4
 

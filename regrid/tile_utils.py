@@ -1,0 +1,145 @@
+"""
+tile_utils.py
+
+Pure helper functions for creating tiles
+"""
+
+import numpy
+
+def slice_array(arr, box, position='corner', fold_north=True, cyclic_zonal=True, fold_south=False):
+    """Slice a 2D field with extend indices that cover halos
+    Treatment of halos beyond the boundaries:
+    If not specified, all boundaries are assumed to be reflective.
+        For example, to extend 2 point from | 0, 1, 2 ... => 1, 0, | 0, 1, 2...
+    By default, cyclic boundary is assumed at the western and eastern boundaries,
+    and folding boundary is assumed at the northern boundary. The southern boundary is ignored.
+    This method is operated over the "symmetric" grid strutures, i.e. corner fields are
+    one-point larger in each direction.
+
+    Parameters
+    ----------
+    arr : 2D ndarray
+        Input field
+    box : tuple
+        Four-element tuple (jst, jed, ist, ied). The indices are for cell centers.
+    position : string, optional
+        Grid position of the input field. Can be either 'center', 'corner', 'u', and 'v'. Default is 'corner'
+    fold_north : bool, optional
+        If true, folding (in the middle) boundary is assumed at the northern end (bi-polar cap).
+        Default is True.
+    cyclic_zonal : bool, optional
+        If true, cyclic boundary is assumed in the zonal direction.
+        Default is True
+    fold_north : bool, optional
+        Placeholder for a folding boundary at the southern end. Does not work if True.
+        Default is False.
+
+    Returns
+    ----------
+    Out : ndarray
+        sliced field
+    """
+    Nj, Ni = arr.shape
+    jst, jed, ist, ied = box
+
+    # Additional points for staggered locations (symmetric)
+    if position == 'center':
+        oy, ox = 0, 0
+    elif position == 'corner':
+        oy, ox = 1, 1
+    elif position == 'u':
+        oy, ox = 0, 1
+    elif position == 'v':
+        oy, ox = 1, 0
+    else: raise Exception('Unknown grid position.')
+
+    # The center piece reach the natural boundaries of the domain
+    #   This is equivalent to slice(max(jst,0), min(jed+oy, Ni))
+    yc = slice(jst-Nj, jed+oy)
+    xc = slice(ist-Ni, ied+ox)
+
+    if cyclic_zonal:
+        # Cyclic boundary condition at the western and eastern end
+        #   For boundary grid, we need to move 1 point "outward" to exclude shared western and eastern boundaries.
+        xw = slice(Ni+ist-ox, Ni-ox)  # [] if ist>=0
+        xe = slice(-Ni+ox, -Ni+ox+(ied+ox-Ni))  # [] if ied+ox<=Ni
+    else:
+        # reflective
+        xw = slice(-Ni-ist, -Ni, -1)
+        xe = slice(Ni-2, Ni-2-(ied+ox-Ni), -1)
+        # No extention
+        # xw = slice(0, 0)
+        # xe = slice(0, 0)
+
+    if fold_north:
+        # Fold northern boundary
+        #   For boundary grid, we need to move 1 point southward to exclude shared northern boundary.
+        yn = slice(Nj-1-oy, Nj-1-oy-(jed+oy-Nj), -1)
+        xn = slice(-1-(ist-Ni), -1-(ied+ox), -1)  # ii=0 <-> ii=Ni-1 (-1), ii=1 <-> ii=Ni-2 (-2) ...
+    else:
+        # reflective
+        yn = slice(Nj-2, Nj-2-(jed+oy-Nj), -1)
+        # No extention
+        # yn = slice(0, 0)
+        xn = xc
+
+    if cyclic_zonal and fold_north:
+        xnw = slice(-1-(Ni+ist-ox), -1-(Ni-ox), -1)
+        xne = slice(-1-(-Ni+ox), -1-(-Ni+ox+(ied+ox-Ni)), -1) # slice(Ni-1-ox, Ni-1-ox-(ied+ox-Ni), -1)
+    else:
+        xnw = xw
+        xne = xe
+
+    if fold_south:
+        raise Exception('fold_south is not supported.')
+    else:
+        # reflective
+        ys = slice(-Nj-jst, -Nj, -1)
+        # No extention over southern boundary, a place holder
+        # ys = slice(0, 0)
+        xs = xc
+        xsw = xw
+        xse = xe
+
+    NoWe, North, NoEa = arr[yn, xnw], arr[yn, xn], arr[yn, xne]
+    West, Center, East = arr[yc, xw], arr[yc, xc], arr[yc, xe]
+    SoWe, South, SoEa = arr[ys, xsw], arr[ys, xs], arr[ys, xse]
+    # print(NoWe.shape, North.shape, NoEa.shape)
+    # print(West.shape, Center.shape, East.shape)
+    # print(SoWe.shape, South.shape, SoEa.shape)
+    return numpy.r_[numpy.c_[SoWe, South, SoEa], numpy.c_[West, Center, East], numpy.c_[NoWe, North, NoEa]]
+
+def decompose_domain(N, nd, symmetric=False):
+    """Decompose 1-D domain
+
+    Parameters
+    ----------
+    N : integer
+        Number of grid points in the 1-D domain
+    nd : integer
+        Number of sub-domains
+    symmetric : bool, optional
+        When true, try to generate a symmetric decomposition
+
+    Returns
+    ----------
+    Out : ndarray
+        A list of starting and ending indices of the sub-domains
+    """
+
+    if nd>N:
+        print("Warning: number of sub-domains > number of grid points. Actual sub-domain number is reduced to %i."%N)
+        return numpy.array([(ist,ist+1) for ist in range(N)], dtype='i,i')
+
+    dn = numpy.ones((nd,), dtype=numpy.int16)*(N//nd)
+    res = N%nd
+
+    if ((nd%2==0) and (res%2==1)) or (not symmetric):
+        dn[:res] += 1
+    else:
+        if (nd%2==0) and (res%2==0):
+            dn[nd//2-res//2:nd//2+res//2] += 1
+        if (nd%2==1):
+            dn[nd//2-res//2:nd//2+res//2+1] += 1
+            if (res%2==0): dn[nd//2] -= 1
+    return numpy.array([(ist, ied) for ist, ied in zip(numpy.r_[0, numpy.cumsum(dn)[:-1]],numpy.cumsum(dn))], dtype='i,i')
