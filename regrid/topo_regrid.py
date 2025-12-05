@@ -1,41 +1,13 @@
-import argparse
 import sys
 import numpy
 import multiprocessing
 import functools
-import netCDF4
-import time
-from external.thinwall.python import GMesh
-from external.thinwall.python import ThinWalls
-from roughness import subgrid_roughness_gradient
-from output_utils import write_output, write_hitmap
-from tile_utils import slice_array, decompose_domain, normlize_longitude
-
-class TimeLog(object):
-    """An object logging times"""
-    def __init__(self, keys):
-        self.processes = dict()
-        for key in keys:
-            self.processes[key] = 0.0
-        self.update_prev()
-    def update_prev(self):
-        """Set current time as a reference previous time"""
-        self.ref_time = self.now
-    @property
-    def now(self):
-        """"Current time"""
-        return time.time_ns()
-    def delta(self, key, ref_time=None):
-        """Accumulates time elapsed since reference time in processes[key]"""
-        if ref_time is None: ref_time = self.ref_time
-        dt = self.now - ref_time
-        self.update_prev()
-        self.processes[key] += dt
-    def print(self):
-        for label, dt in self.processes.items():
-            dt //= 1000000
-            if dt<9000: print( '{:>10}ms : {}'.format( dt, label) )
-            else: print( '{:>10}secs : {}'.format( dt / 1000, label) )
+from .external.thinwall.python import GMesh
+from .external.thinwall.python import ThinWalls
+from .roughness import subgrid_roughness_gradient
+from .tile_utils import slice_array, decompose_domain, normlize_longitude, box_halo
+from .output_utils import TimeLog
+# from .north_pole import NorthPoleMask
 
 class HitMap(GMesh.GMesh):
     """A container for hits on the source grid
@@ -195,8 +167,11 @@ class Domain(ThinWalls.ThinWalls):
             assert self.ni%2==0, 'An odd number ni does not work with bi-polar cap.'
             num_north_pole=2
 
-        self.pole_radius = pole_radius
-        self.north_mask = self.find_north_pole_rectangles(num_north_pole=num_north_pole)
+        if num_north_pole > 0:
+            self.north_mask = NorthPoleMask(self, counts=num_north_pole, radius=pole_radius)
+
+        # self.pole_radius = pole_radius
+        # self.north_mask = self.find_north_pole_rectangles(num_north_pole=num_north_pole)
 
     def __str__(self):
         if self.is_geo_coord:
@@ -211,74 +186,8 @@ class Domain(ThinWalls.ThinWalls):
             f'Domain size (nj ni): ({self.nj}, {self.ni})',
             f'Domain range ({coord_name}): [{self.lat.min():10.6f}, {self.lat.max():10.6f}], [{lonmin:10.6f}, {lonmax:10.6f}]'
         ]
-        if len(self.north_mask)>0:
-            disp.append('North Pole rectangles (radius =%5.2f%1s)'%(self.pole_radius, chr(176)))
-            for box in self.north_mask:
-                disp.append('  js,je,is,ie: %s, shape: (%i,%i)'%(box, box[1]-box[0], box[3]-box[2]))
+        if hasattr(self, 'north_mask'): disp.append(str(self.north_mask))
         return '\n'.join(disp)
-
-    def find_north_pole_rectangles(self, north_pole_cutoff_lat=None, num_north_pole=0):
-        """Returns the extented rectangles of the grids enclosed by a latitudinal circle
-        Parameters
-        ----------
-        north_pole_cutoff_lat : float, optional
-            Cutoff latitude (not included) which the rectangle boxes enclose.
-        num_north_pole : int, optional
-            Number of North Poles.
-
-        Output:
-        ----------
-        recs : list of tuples
-            Indices of rectangle boxes. Number of boxes depends on num_north_pole.
-        """
-        if north_pole_cutoff_lat is None:
-            north_pole_cutoff_lat = 90.0 - self.pole_radius
-        jj, ii = numpy.where(self.lat>north_pole_cutoff_lat)
-
-        if jj.size==0 or ii.size==0 or num_north_pole==0:
-            recs = []
-        elif num_north_pole==1:
-            recs = [(jj.min(), jj.max(), ii.min(), ii.max())]
-        elif num_north_pole==2:
-            jjw = jj[ii<self.ni//2]; iiw = ii[ii<self.ni//2]
-            jje = jj[ii>self.ni//2]; iie = ii[ii>self.ni//2]
-            assert numpy.all(jjw==jje), 'nj in the two mask domains mismatch.'
-            jj = jjw
-            assert (jjw.max()==self.nj), 'mask domains do not reach the north boundary.'
-            assert (iiw.min()+iie.max()==self.ni) and ((iiw.max()+iie.min()==self.ni)), \
-                'ni in the two mask domains mismatch.'
-            recs = [(jj.min(), jj.max(), iiw.min(), iiw.max()),
-                    (jj.min(), jj.max(), iie.min(), iie.max())]
-            # self.north_mask = [(jj.min(), 2*self.nj-jj.min(), iiw.min(), iiw.max()),
-            #                    (jj.min(), 2*self.nj-jj.min(), iie.min(), iie.max())] # extend passing the northern boundary for halos
-        else:
-            raise Exception('Currently only two north pole rectangles are supported.')
-        return recs
-
-    def find_local_masks(self, box, halo):
-        """Finds where the north pole rectangles overlap with the subdomain"""
-        masks = []
-        jst, jed, ist, ied = box
-        jsth, jedh, isth, iedh = jst-halo, jed+halo, ist-halo, ied+halo
-        for jstm, jedm, istm, iedm in self.north_mask:
-            if (not ((istm>=iedh) or iedm<=isth)) and (not ((jstm>=jedh) or (jedm<=jsth))):
-                # Relative indices
-                j0, j1, i0, i1 = max(jstm,jsth)-jsth, min(jedm,jedh)-jsth, max(istm,isth)-isth, min(iedm,iedh)-isth
-                # if mask boundary is beyond subdomain boundary but within halo, ignore halo
-                if jstm<=jst:
-                    j0 = 0
-                if jedm>=jed:
-                    j1 = jedh - jsth
-                if istm<=ist:
-                    i0 = 0
-                if iedm>=ied:
-                    i1 = iedh - isth
-                # if jedm==self.nj and jed>self.nj: j1 = jed-jst
-                # # The following addresses a very trivial case when the mask reaches
-                # # the southern bounndary, which may only happen in tests.
-                # if jstm==0 and jst<0: j0 = 0
-                masks.append((j0, j1, i0, i1))
-        return masks
 
     def create_subdomains(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, norm_lon=None, eds=None, subset_eds=True, src_halo=0,
                           refine_loop_args={}, verbose=False):
@@ -331,7 +240,7 @@ class Domain(ThinWalls.ThinWalls):
                 lat = slice_array(self.lat, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
                 if norm_lon: lon = normlize_longitude(lon, lat)
 
-                masks = self.find_local_masks((jst, jed, ist, ied), tgt_halo)
+                masks = self.north_mask.find_local_masks((jst, jed, ist, ied), tgt_halo)
                 chunks[pe_j, pe_i] = RefineWrapper(lon=lon, lat=lat, id=(pe_j, pe_i), is_geo_coord=self.is_geo_coord,
                                                    eds=eds, subset_eds=subset_eds, src_halo=src_halo,
                                                    mask_recs=masks, refine_loop_args=refine_loop_args)
@@ -644,16 +553,135 @@ class Domain(ThinWalls.ThinWalls):
         north_masks = self.north_mask
         while latc<=lat_end:
             print(latc)
-            for mask in north_masks:
-                mask_domain = self.create_mask_domain(mask=mask, tgt_halo=tgt_halo, pole_radius=90.0-latc)
+            mask_domains = north_masks.create_mask_domain(tgt_halo=tgt_halo, pole_radius=90.0-latc)
+            for ii, mask_domain in enumerate(mask_domains):
                 refine_loop_args['singularity_radius'] = mask_domain.pole_radius
                 mask_domain.regrid_topography(pelayout=pelayout, tgt_halo=tgt_halo, nprocs=nprocs, eds=eds, src_halo=src_halo,
                                               refine_loop_args=refine_loop_args, calc_args=calc_args, hitmap=hitmap,
                                               bnd_tol_level=bnd_tol_level)
-                self.stitch_mask_domain(mask_domain, mask, tgt_halo, tolerance=bnd_tol_level, **calc_args)
+                self.stitch_mask_domain(mask_domain, north_masks[ii], tgt_halo, tolerance=bnd_tol_level, **calc_args)
             self.stitch_mask_fold_north(tolerance=bnd_tol_level, do_effective=calc_args['do_effective'])
-            north_masks = self.find_north_pole_rectangles(north_pole_cutoff_lat=latc, num_north_pole=2)
+            north_masks = NorthPoleMask(radius=latc, counts=2)
             latc += lat_step
+
+class NorthPoleMask:
+    def __init__(self, domain, counts=0, radius=0.25):
+        """
+        Parameters
+        ----------
+        domain : Domain object
+            The domain where the mask is to be found.
+        counts : integer, optional
+            Number of north poles in the target grid. E.g. there are two north poles in the bi-polar cap.
+        radius : float
+            The radius of the north pole region used to a) decide the mask of north pole in the target grid;
+            b) ignore the hits in source grid
+        verbose : bool
+        """
+        self.domain = domain
+        self.counts = counts
+        self.radius = radius
+        self._masks = self._find_north_pole_rectangles()
+
+    def __str__(self):
+        disp = [
+            f'North Pole rectangles (radius = {self.radius:5.2f}{chr(176):1s}) in {repr(self.domain)}'
+        ]
+        for box in self:
+            idx_str = ','.join([f"{idx:d}" for idx in box])
+            disp.append( f'  js,je,is,ie: {idx_str}, shape: ({box[1]-box[0]}, {box[3]-box[2]})' )
+        return '\n'.join(disp)
+
+    def __getitem__(self, index):
+        return self._masks[index]
+
+    def _find_north_pole_rectangles(self):
+        """Returns the extented rectangles of the grids enclosed by a latitudinal circle
+        Output:
+        ----------
+        recs : list of tuples
+            Indices of rectangle boxes. Number of boxes depends on num_north_pole.
+        """
+        domain = self.domain
+        jj, ii = numpy.where(domain.lat > (90.0 - self.radius))
+
+        if jj.size==0 or ii.size==0 or self.counts==0:
+            recs = []
+        elif self.counts==1:
+            recs = [(jj.min(), jj.max(), ii.min(), ii.max())]
+        elif self.counts==2:
+            jjw = jj[ii<domain.ni//2]; iiw = ii[ii<domain.ni//2]
+            jje = jj[ii>domain.ni//2]; iie = ii[ii>domain.ni//2]
+            assert numpy.all(jjw==jje), 'nj in the two mask domains mismatch.'
+            jj = jjw
+            assert (jjw.max()==domain.nj), 'mask domains do not reach the north boundary.'
+            assert (iiw.min()+iie.max()==domain.ni) and ((iiw.max()+iie.min()==domain.ni)), \
+                'ni in the two mask domains mismatch.'
+            recs = [(jj.min(), jj.max(), iiw.min(), iiw.max()),
+                    (jj.min(), jj.max(), iie.min(), iie.max())]
+            # self.masks = [(jj.min(), 2*domain.nj-jj.min(), iiw.min(), iiw.max()),
+            #                    (jj.min(), 2*domain.nj-jj.min(), iie.min(), iie.max())] # extend passing the northern boundary for halos
+        else:
+            raise Exception('Currently only two north pole rectangles are supported.')
+        return recs
+
+    def find_local_masks(self, box, halo):
+        """Finds where the north pole rectangles overlap with the subdomain"""
+        masks = []
+        jst, jed, ist, ied = box
+        jsth, jedh, isth, iedh = jst-halo, jed+halo, ist-halo, ied+halo
+        for jstm, jedm, istm, iedm in self:
+            if (not ((istm>=iedh) or iedm<=isth)) and (not ((jstm>=jedh) or (jedm<=jsth))):
+                # Relative indices
+                j0, j1, i0, i1 = max(jstm,jsth)-jsth, min(jedm,jedh)-jsth, max(istm,isth)-isth, min(iedm,iedh)-isth
+                # if mask boundary is beyond subdomain boundary but within halo, ignore halo
+                if jstm<=jst:
+                    j0 = 0
+                if jedm>=jed:
+                    j1 = jedh - jsth
+                if istm<=ist:
+                    i0 = 0
+                if iedm>=ied:
+                    i1 = iedh - isth
+                # if jedm==self.nj and jed>self.nj: j1 = jed-jst
+                # # The following addresses a very trivial case when the mask reaches
+                # # the southern bounndary, which may only happen in tests.
+                # if jstm==0 and jst<0: j0 = 0
+                masks.append((j0, j1, i0, i1))
+        return masks
+
+    def create_mask_domain(self, tgt_halo=0, norm_lon=True, pole_radius=0.25):
+        """Creates a domain for the masked north pole region
+
+        Parameters
+        ----------
+        tgt_halo : int, optional
+            Halo size
+        pole_radius : float, optional
+            Polar radius in the new mask domain
+
+        Output
+        ----------
+        mds : A list of Domain object
+        """
+
+        domain = self.domain
+        mds = []
+        for mask in self:
+            mask_box = box_halo(mask, tgt_halo)
+
+            lon = slice_array(domain.lon, box=mask_box, cyclic_zonal=False, fold_north=True)
+            lat = slice_array(domain.lat, box=mask_box, cyclic_zonal=False, fold_north=True)
+            if norm_lon: lon = normlize_longitude(lon, lat)
+
+            Idx, Idy = None, None
+            if domain.Idx is not None:
+                Idx = slice_array(domain.Idx, box=mask_box, position='center', cyclic_zonal=False, fold_north=True)
+            if domain.Idy is not None:
+                Idy = slice_array(domain.Idy, box=mask_box, position='center', cyclic_zonal=False, fold_north=True)
+
+            mds.append( Domain(lon=lon, lat=lat, Idx=Idx, Idy=Idy, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius) )
+        return mds
 
 def match_edges(edge1, edge2, rfl1, rfl2, tolerance=0, verbose=True, message=''):
     """Check if two edges are identical and if not, return the proper one.
@@ -834,212 +862,3 @@ def topo_gen_mp(domain_list, nprocs=None, topo_gen_args={}):
     pool.join()
 
     return tw_list
-
-def main(argv):
-    parser = argparse.ArgumentParser(description='Objective topography regridding',
-                                     formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument("-v", "--verbose", action='store_true')
-    parser.add_argument("--verbosity", default=0, help='Granularity of log output')
-
-    parser_tgt = parser.add_argument_group('Target grid')
-    parser_tgt.add_argument("--target_grid", default='', help='File name of the target grid')
-    parser_tgt.add_argument("--lon_tgt", default='x', help='Field name in target grid file for longitude')
-    parser_tgt.add_argument("--lat_tgt", default='y', help='Field name in target grid file for latitude')
-    parser_tgt.add_argument("--non-supergrid", action='store_true',
-                            help='If specified, the target grid file is not on a supergrid. Currently not supported')
-    parser_tgt.add_argument("--mono_lon", action='store_true',
-                            help='If specified, a 360-degree shift will be made to guarantee the last row of lon is monotonic.')
-    parser_tgt.add_argument("--tgt_halo", default=0, type=int, help='Halo size at both directions for target grid subdomain')
-    parser_tgt.add_argument("--tgt_regional", action='store_true', help='If true, target grid is regional rather than global.')
-
-    parser_src = parser.add_argument_group('Source data')
-    parser_src.add_argument("--source", default='', help='File name of the source data')
-    parser_src.add_argument("--coord_source", default='', help='File name of the source coordinate (can be different from source)')
-    parser_src.add_argument("--lon_src", default='lon', help='Field name in source file for longitude')
-    parser_src.add_argument("--lat_src", default='lat', help='Field name in source file for latitude')
-    parser_src.add_argument("--src_halo", default=0, type=int, help='Halo size of at both directions for subsetting source data')
-    parser_src.add_argument("--elev", default='elevation', help='Field name in source file for elevation')
-    parser_src.add_argument("--remove_src_repeat_lon", action='store_true',
-                            help=('If specified, the repeating longitude in the last column is removed. '
-                                  'Elevation along that longitude will be the mean.'))
-
-    parser_cc = parser.add_argument_group('Calculation options')
-    parser_cc.add_argument("--mean-only", action='store_true', help='Output cell-mean topography only')
-    parser_cc.add_argument("--do_thinwalls", action='store_true', help='Calculate thin wall parameters')
-    parser_cc.add_argument("--thinwalls_interp", default='max', help='Interpolation method for getting thin walls.')
-    parser_cc.add_argument("--do_thinwalls_effective", action='store_true', help='Calculate effective depth in porous topography.')
-    parser_cc.add_argument("--do_roughness", action='store_true', help='Calculate roughness')
-    parser_cc.add_argument("--do_gradient", action='store_true', help='Calculate sub-grid gradient')
-    parser_cc.add_argument("--save_hits", action='store_true', help='Save hitmap to a file')
-
-    parser_pe = parser.add_argument_group('Parallelism options')
-    parser_pe.add_argument("--nprocs", default=0, type=int, help='Number of processors used in parallel')
-    parser_pe.add_argument("--pe", nargs='+', type=int, help='Domain decomposition layout')
-    parser_pe.add_argument("--pe_p", nargs='+', type=int, help='Domain decomposition layout for the North Pole rectangles')
-    parser_pe.add_argument("--max_mb", default=10240, type=float, help='Memory limit per processor')
-    parser_pe.add_argument("--bnd_tol_level", default=2, type=int, help='Shared boundary treatment strategy')
-
-    parser_rgd = parser.add_argument_group('Regrid options')
-    parser_rgd.add_argument("--use_corner", action='store_true', help='Use cell corners for nearest neighbor.')
-    parser_rgd.add_argument("--fixed_refine_level", default=-1, type=int, help='Force refinement to a specific level.')
-    parser_rgd.add_argument("--refine_in_3d", action='store_true', help='If specified, use great circle for grid interpolation.')
-    parser_rgd.add_argument("--no_resolution_limit", action='store_true',
-                            help='If specified, do not use resolution constraints to exit refinement')
-    parser_rgd.add_argument("--pole_start", default=85.0, type=float, help='North Pole start lat')
-    parser_rgd.add_argument("--pole_step", default=0.5, type=float, help='Pole steps')
-    parser_rgd.add_argument("--pole_end", default=89.75, type=float, help='North Pole step lat')
-
-    parser_out = parser.add_argument_group('Output options')
-    parser_out.add_argument("--output", default='')
-
-    args = parser.parse_args(argv[1:])
-
-    clock = TimeLog(['Read source', 'Read target', 'Setup', 'Regrid main', 'Regrid masked', 'Write output'])
-    # Read source data
-    print('Reading source data from ', args.source)
-    if args.verbose:
-        print(  "'"+args.lon_src+"'", '-> lon_src')
-        print(  "'"+args.lat_src+"'", '-> lat_src')
-        print(  "'"+args.elev+"'", '-> elev')
-    if args.coord_source:
-        coord_source = args.coord_source
-    else:
-        coord_source = args.source
-    lon_src = netCDF4.Dataset(coord_source)[args.lon_src][:]
-    lat_src = netCDF4.Dataset(coord_source)[args.lat_src][:]
-    elev = netCDF4.Dataset(args.source)[args.elev][:]
-    if args.remove_src_repeat_lon:
-        lon_src = lon_src[:-1]
-        elev = numpy.c_[(elev[:,1]+elev[:,-1])*0.5, elev[:,1:-1]]
-    eds = GMesh.UniformEDS(lon_src, lat_src, elev)
-    clock.delta('Read source')
-
-    # Read target grid
-    if args.non_supergrid: raise Exception('Only supergrid is supported.')
-    print('Reading target grid from ', args.target_grid)
-    if args.verbose:
-        print(  "'"+args.lon_tgt+"'[::2, ::2]", '-> lonb_tgt')
-        print(  "'"+args.lat_tgt+"'[::2, ::2]", '-> latb_tgt')
-    lonb_tgt = netCDF4.Dataset(args.target_grid).variables['x'][::2, ::2].data
-    latb_tgt = netCDF4.Dataset(args.target_grid).variables['y'][::2, ::2].data
-    if args.mono_lon:
-        for ix in range(lonb_tgt.shape[1]-1):
-            if lonb_tgt[-1,ix+1]<lonb_tgt[-1,ix]: lonb_tgt[-1,ix+1] += 360.0
-    if args.do_gradient:
-        dxs = netCDF4.Dataset(args.target_grid).variables['dx'][:].data
-        dys = netCDF4.Dataset(args.target_grid).variables['dy'][:].data
-        dx = dxs[1::2,::2] + dxs[1::2,1::2]
-        dy = dys[::2,1::2] + dys[1::2,1::2]
-        Idx, Idy = 1.0/dx, 1.0/dy
-        Idx[dx==0.0], Idy[dy==0.0] = 0.0, 0.0
-    else:
-        Idx, Idy = None, None
-    if args.tgt_regional:
-        tgt_reentrant_x = False
-        tgt_fold_n = False
-    else:
-        tgt_reentrant_x = True
-        tgt_fold_n = True
-    clock.delta('Read target')
-
-    # Domain decomposition
-    pe = args.pe
-    pe_p = args.pe_p
-    if pe_p is None: pe_p = pe
-    nprocs = args.nprocs
-
-    # Calculation options
-    do_effective = args.do_thinwalls_effective and args.do_thinwalls
-    calc_args = {'do_thinwalls': args.do_thinwalls,
-                 'do_effective': do_effective,
-                 'do_roughness': args.do_roughness,
-                 'do_gradient': args.do_gradient
-                }
-
-    # Regridding and topo_gen options
-    north_pole_lat = args.pole_start
-    np_lat_end = args.pole_end
-    np_lat_step = args.pole_step
-    resolution_limit = (not args.no_resolution_limit) and (args.fixed_refine_level<0)
-    if args.fixed_refine_level>0:
-        resolution_limit = False
-    refine_options = {'use_center': not args.use_corner,
-                      'resolution_limit': resolution_limit,
-                      'fixed_refine_level': args.fixed_refine_level,
-                      'work_in_3d': args.refine_in_3d,
-                      'singularity_radius': 90.0-args.pole_start,
-                      'max_mb': args.max_mb
-                      }
-
-    if args.verbose:
-        print('fixed_refine_level: ', refine_options['fixed_refine_level'])
-        print('use_resolution_limit: ', refine_options['resolution_limit'])
-        print('refine_in_3d: ', refine_options['work_in_3d'])
-        print('north_pole_lat: ', north_pole_lat)
-        print('np_lat_end: ', np_lat_end)
-        print('np_lat_step: ', np_lat_step)
-
-    # Create the target grid domain
-    dm = Domain(lon=lonb_tgt, lat=latb_tgt, Idx=Idx, Idy=Idy, reentrant_x=tgt_reentrant_x,
-                fold_n=tgt_fold_n, num_north_pole=2, pole_radius=refine_options['singularity_radius'])
-    if args.save_hits:
-        hm = HitMap(lon=lon_src, lat=lat_src, from_cell_center=True)
-    else:
-        hm = None
-    clock.delta('Setup')
-
-    # Regrid
-    if args.verbose:
-        print('Starting regridding the domain')
-    if args.do_thinwalls:
-        bnd_tol_level = args.bnd_tol_level
-    else:
-        bnd_tol_level = 0
-    # dm.regrid_topography(pelayout=pe, tgt_halo=args.tgt_halo, nprocs=nprocs, eds=eds, src_halo=args.src_halo,
-    #                      refine_loop_args=refine_options, calc_args=calc_args, hitmap=hm,
-    #                      bnd_tol_level=bnd_tol_level, verbose=args.verbose)
-    subdomains = dm.create_subdomains(pelayout=pe, tgt_halo=args.tgt_halo, eds=eds, subset_eds=True, src_halo=args.src_halo,
-                                      refine_loop_args=refine_options, verbose=False)
-    # clock.delta('Domain decomposition')
-
-    topo_gen_args = calc_args.copy()
-    topo_gen_args.update({'tw_interp': args.thinwalls_interp, 'save_hits': not (hm is None), 'verbose': True, 'timers': True})
-
-    if nprocs>1:
-        twlist = topo_gen_mp(subdomains.flatten(), nprocs=nprocs, topo_gen_args=topo_gen_args)
-    else: # with nprocs==1, multiprocessing is not used.
-        twlist = [topo_gen(sdm, **topo_gen_args) for sdm in subdomains.flatten()]
-
-    if topo_gen_args['save_hits']:
-        twlist, hitlist = zip(*twlist)
-        hm.stitch_hits(hitlist)
-
-    dm.stitch_subdomains(twlist, tolerance=bnd_tol_level, verbose=args.verbose, **calc_args)
-
-    clock.delta('Regrid main')
-    if args.fixed_refine_level<0:
-        if args.verbose:
-            print('Starting regridding masked North Pole')
-        # Donut update near the (geographic) north pole
-        dm.regrid_topography_masked(lat_end=np_lat_end, lat_step=np_lat_step, pelayout=pe_p, nprocs=nprocs, tgt_halo=args.tgt_halo, eds=eds, src_halo=args.src_halo,
-                                    refine_loop_args=refine_options, calc_args=calc_args, hitmap=hm, verbose=args.verbose)
-    clock.delta('Regrid masked')
-
-    # Output to a netCDF file
-    if args.mean_only:
-        mode = 'mean'
-    elif not args.do_thinwalls:
-        mode = 'center'
-    else:
-        mode = 'all'
-    write_output(dm, args.output, mode=mode, do_effective=args.do_thinwalls_effective, output_refine=True,
-                 do_roughness=args.do_roughness, do_gradient=args.do_gradient,
-                 format='NETCDF3_64BIT_OFFSET', history=' '.join(argv))
-    if args.save_hits:
-        write_hitmap(hm, 'hitmap.nc')
-    clock.delta('Write output')
-
-    clock.print()
-
-if __name__ == "__main__":
-    main(sys.argv)

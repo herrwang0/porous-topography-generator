@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -10,6 +10,9 @@ authors = [{ name = "He Wang", email = "hewang@ucar.edu" }]
 readme = "README.md"
 license = { text = "MIT" }
 dependencies = []
+
+[project.scripts]
+ptopo = "regrid.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

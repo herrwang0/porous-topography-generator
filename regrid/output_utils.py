@@ -1,11 +1,38 @@
 """
 output_utils.py
 
-Pure helper functions for creating files
+Pure helper functions for creating files and timers
 """
 
 import numpy
 import netCDF4
+import time
+
+class TimeLog(object):
+    """An object logging times"""
+    def __init__(self, keys):
+        self.processes = dict()
+        for key in keys:
+            self.processes[key] = 0.0
+        self.update_prev()
+    def update_prev(self):
+        """Set current time as a reference previous time"""
+        self.ref_time = self.now
+    @property
+    def now(self):
+        """"Current time"""
+        return time.time_ns()
+    def delta(self, key, ref_time=None):
+        """Accumulates time elapsed since reference time in processes[key]"""
+        if ref_time is None: ref_time = self.ref_time
+        dt = self.now - ref_time
+        self.update_prev()
+        self.processes[key] += dt
+    def print(self):
+        for label, dt in self.processes.items():
+            dt //= 1000000
+            if dt<9000: print( '{:>10}ms : {}'.format( dt, label) )
+            else: print( '{:>10}secs : {}'.format( dt / 1000, label) )
 
 def write_output(domain, filename, mode='center', do_effective=False, do_roughness=False, do_gradient=False, output_refine=True,
                  format='NETCDF3_64BIT_OFFSET', history='', description=None,

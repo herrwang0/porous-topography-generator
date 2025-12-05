@@ -144,6 +144,15 @@ def decompose_domain(N, nd, symmetric=False):
             if (res%2==0): dn[nd//2] -= 1
     return numpy.array([(ist, ied) for ist, ied in zip(numpy.r_[0, numpy.cumsum(dn)[:-1]],numpy.cumsum(dn))], dtype='i,i')
 
+def box_halo(box, halo):
+    """Extend box with halo"""
+    jst, jed, ist, ied = box
+    if isinstance(halo, (tuple, list)):
+        halo_j, halo_i = halo
+    else:
+        halo_j, halo_i = halo, halo
+    return (jst - halo_j, jed + halo_j, ist - halo_i, ied + halo_j)
+
 def normlize_longitude(lon, lat):
     """Shift longitude by 360*n so that it is monotonic (when it is possible)"""
     # To avoid jumps, the reference longitude should be outside of the domain.
