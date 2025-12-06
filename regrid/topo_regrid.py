@@ -2,11 +2,12 @@ import sys
 import numpy
 import multiprocessing
 import functools
+
 from .external.thinwall.python import GMesh
 from .external.thinwall.python import ThinWalls
 from .roughness import subgrid_roughness_gradient
 from .tile_utils import slice_array, decompose_domain, normlize_longitude, box_halo
-from .output_utils import TimeLog
+from .output_utils import TimeLog, CalcConfig
 # from .north_pole import NorthPoleMask
 
 class HitMap(GMesh.GMesh):
@@ -291,11 +292,9 @@ class Domain(ThinWalls.ThinWalls):
 
         return Domain(lon=lon, lat=lat, Idx=Idx, Idy=Idy, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius)
 
-    def stitch_subdomains(self, thinwalls_list, tolerance=0, do_thinwalls=True, do_effective=True,
-                          do_roughness=False, do_gradient=False, verbose=True):
+    def stitch_subdomains(self, thinwalls_list, tolerance=0, config=CalcConfig(), verbose=True):
         """"Stitch subdomains
         """
-        do_effective = do_effective and do_thinwalls
         npj, npi = self.pelayout.shape
 
         # Put the list of ThinWalls on a 2D array to utilize numpy array's slicing
@@ -304,7 +303,7 @@ class Domain(ThinWalls.ThinWalls):
             tiles[tw.id] = tw
 
         self.c_rfl = numpy.zeros( self.shape, dtype=numpy.int32 )
-        if do_thinwalls:
+        if config.calc_thinwalls:
             self.u_rfl = numpy.zeros( (self.shape[0],self.shape[1]+1), dtype=numpy.int32 )
             self.v_rfl = numpy.zeros( (self.shape[0]+1,self.shape[1]), dtype=numpy.int32 )
 
@@ -318,7 +317,7 @@ class Domain(ThinWalls.ThinWalls):
                 self.c_simple[jsg:jeg,isg:ieg] = this.c_simple[jst:jet,ist:iet]
                 self.c_rfl[jsg:jeg,isg:ieg] = this.mrfl
 
-                if not do_thinwalls:
+                if not config.calc_thinwalls:
                     continue
 
                 self.u_simple[jsg:jeg,isg:ieg+1] = this.u_simple[jst:jet,ist:iet+1]
@@ -326,7 +325,7 @@ class Domain(ThinWalls.ThinWalls):
                 self.v_simple[jsg:jeg+1,isg:ieg] = this.v_simple[jst:jet+1,ist:iet]
                 self.v_rfl[jsg:jeg+1,isg:ieg] = this.mrfl
 
-                if do_effective:
+                if config.calc_effective_tw:
                     self.c_effective[jsg:jeg,isg:ieg] = this.c_effective[jst:jet,ist:iet]
                     self.u_effective[jsg:jeg,isg:ieg+1] = this.u_effective[jst:jet,ist:iet+1]
                     self.v_effective[jsg:jeg+1,isg:ieg] = this.v_effective[jst:jet+1,ist:iet]
@@ -341,7 +340,7 @@ class Domain(ThinWalls.ThinWalls):
                         TR.u_simple[jst:jet,ist], this.mrfl, TR.mrfl,
                         tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)')
                     self.u_rfl[jsg:jeg, ieg] = max(this.mrfl, TR.mrfl)
-                    if do_effective:
+                    if config.calc_effective_tw:
                         self.u_effective[jsg:jeg, ieg] = match_edges(this.u_effective[jst:jet,iet],
                             TR.u_effective[jst:jet,ist], this.mrfl, TR.mrfl,
                             tolerance=tolerance, verbose=verbose, message=edgeloc+' (effective)')
@@ -352,15 +351,15 @@ class Domain(ThinWalls.ThinWalls):
                         TU.v_simple[jst,ist:iet], this.mrfl, TU.mrfl,
                         tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)')
                     self.v_rfl[jeg,isg:ieg] = max(this.mrfl, TU.mrfl)
-                    if do_effective:
+                    if config.calc_effective_tw:
                         self.v_effective[jeg,isg:ieg] = match_edges(this.v_effective[jet,ist:iet],
                             TU.v_effective[jst,ist:iet], this.mrfl, TU.mrfl,
                             tolerance=tolerance, verbose=verbose, message=edgeloc+' (effective)')
         # Cyclic/folding boundaries
-        if do_thinwalls:
+        if config.calc_thinwalls:
             if self.reentrant_x:
                 self.u_simple[:,0], self.u_rfl[:,0] = self.u_simple[:,-1], self.u_rfl[:,-1]
-                if do_effective:
+                if config.calc_effective_tw:
                     self.u_effective[:,0] = self.u_effective[:,-1]
 
             if self.fold_n:
@@ -381,7 +380,7 @@ class Domain(ThinWalls.ThinWalls):
                     self.v_simple[-1,isgf:iegf] = self.v_simple[-1,isg:ieg][::-1]
                     self.v_rfl[-1,isgf:iegf] = self.v_rfl[-1,isg:ieg][::-1]
 
-                    if do_effective:
+                    if config.calc_effective_tw:
                         self.v_effective[-1,isg:ieg] = match_edges(this.v_effective[jet1,ist1:iet1],
                             TU.v_effective[jet2,iet2:ist2:-1], this.mrfl, TU.mrfl,
                             tolerance=tolerance, verbose=verbose, message=edgeloc+' (effective)')
@@ -398,20 +397,20 @@ class Domain(ThinWalls.ThinWalls):
                         tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)')
                     self.v_simple[-1,ist+nhf:ied] = self.v_simple[-1,ist:ist+nhf][::-1]
                     self.v_rfl[-1,ist:ied] = this.mrfl
-                    if do_effective:
+                    if config.calc_effective_tw:
                         self.v_effective[-1,ist:ist+nhf] = match_edges(this.v_effective[nj-halo,halo:halo+nhf],
                             this.v_effective[nj-halo,halo+nhf:ni-halo:][::-1], this.mrfl, this.mrfl,
                             tolerance=tolerance, verbose=verbose, message=edgeloc+' (effective)')
                         self.v_effective[-1,ist+nhf:ied] = self.v_effective[-1, ist:ist+nhf][::-1]
 
-        if do_roughness:
+        if config.calc_roughness:
             self.roughness = numpy.zeros( self.shape )
             for iy in range(npj):
                 for ix in range(npi):
                     (jst, jed, ist, ied), halo = self.pelayout[iy, ix]
                     nj, ni = tiles[iy,ix].shape
                     self.roughness[jst:jed,ist:ied] = tiles[iy,ix].roughness[halo:nj-halo,halo:ni-halo]
-        if do_gradient:
+        if config.calc_gradient:
             self.gradient = numpy.zeros( self.shape )
             for iy in range(npj):
                 for ix in range(npi):
@@ -419,12 +418,10 @@ class Domain(ThinWalls.ThinWalls):
                     nj, ni = tiles[iy,ix].shape
                     self.gradient[jst:jed,ist:ied] = tiles[iy,ix].gradient[halo:nj-halo,halo:ni-halo]
 
-    def stitch_mask_domain(self, mask, rec, halo, do_thinwalls=True, do_effective=True,
-                           do_roughness=False, do_gradient=False, tolerance=2, verbose=False):
+    def stitch_mask_domain(self, mask, rec, halo, config=CalcConfig(), tolerance=2, verbose=False):
         """
         The assumption is the masked domain has the higher refine level
         """
-        do_effective = do_effective and do_thinwalls
         jsg, jeg, isg, ieg = rec  # global indices
         # Cell center sizes
         nj, ni = jeg-jsg+2*halo, ieg-isg+2*halo
@@ -435,7 +432,7 @@ class Domain(ThinWalls.ThinWalls):
         mCs, mUs, mVs = mask.c_simple, mask.u_simple, mask.v_simple
         dCr, dUr, dVr = self.c_rfl, self.u_rfl, self.v_rfl
         mCr, mUr, mVr = mask.c_rfl, mask.u_rfl, mask.v_rfl
-        if do_effective:
+        if config.calc_effective_tw:
             dCe, dUe, dVe = self.c_effective, self.u_effective, self.v_effective
             mCe, mUe, mVe = mask.c_effective, mask.u_effective, mask.v_effective
 
@@ -446,7 +443,7 @@ class Domain(ThinWalls.ThinWalls):
         dCs[jsg:jeg,isg:ieg] = mCs[jst:jet,ist:iet]
         dCr[jsg:jeg,isg:ieg] = mCr[jst:jet,ist:iet]
 
-        if do_thinwalls:
+        if config.calc_thinwalls:
             dUs[jsg:jeg,isg+1:ieg] = mUs[jst:jet,ist+1:iet]
             dUr[jsg:jeg,isg+1:ieg] = mUr[jst:jet,ist+1:iet]
             dVs[jsg+1:jeg,isg:ieg] = mVs[jst+1:jet,ist:iet]
@@ -474,7 +471,7 @@ class Domain(ThinWalls.ThinWalls):
             dVr[jsg,isg:ieg] = numpy.maximum(dVr[jsg,isg:ieg], mVr[jst,ist:iet])
             dVr[jeg,isg:ieg] = numpy.maximum(dVr[jeg,isg:ieg], mVr[jet,ist:iet])
 
-            if do_effective:
+            if config.calc_effective_tw:
                 dCe[jsg:jeg,isg:ieg] = mCe[jst:jet,ist:iet]
                 dUe[jsg:jeg,isg+1:ieg] = mUe[jst:jet,ist+1:iet]
                 dVe[jsg+1:jeg,isg:ieg] = mVe[jst+1:jet,ist:iet]
@@ -496,9 +493,9 @@ class Domain(ThinWalls.ThinWalls):
                                                dVr[jeg,isg:ieg], mVr[jet,ist:iet],
                                                tolerance=tolerance, verbose=verbose, message=msg)
 
-        if do_roughness:
+        if config.calc_roughness:
             self.roughness[jsg:jeg,isg:ieg] = mask.roughness[jst:jet,ist:iet]
-        if do_gradient:
+        if config.calc_gradient:
             self.gradient[jsg:jeg,isg:ieg] = mask.gradient[jst:jet,ist:iet]
 
     def stitch_mask_fold_north(self, do_effective=False, tolerance=2, verbose=False):
@@ -751,7 +748,7 @@ def match_edges(edge1, edge2, rfl1, rfl2, tolerance=0, verbose=True, message='')
             print(message+' have the same edge but different refinement levels '+str_rfls+'.')
         return edge1
 
-def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, tw_interp='max', do_effective=True, save_hits=True, verbose=True, timers=False):
+def topo_gen(grid, config=CalcConfig(), tw_interp='max', save_hits=True, verbose=True, timers=False):
     """The main function for generating topography
 
     Parameters
@@ -770,9 +767,8 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, tw
         print('topo_gen() for domain {:}'.format(grid.id))
 
     use_center = grid.refine_loop_args['use_center']
-    if (not use_center) and (do_roughness or do_gradient):
+    if (not use_center) and (config.calc_roughness or config.calc_gradient):
         raise Exception('"use_center" needs to be used for roughness or gradient')
-    do_effective = do_effective and do_thinwalls
     if timers: clock.delta('setup topo_gen')
 
     # Step 1: Refine grid
@@ -793,13 +789,13 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, tw
     tw = ThinWalls.ThinWalls(lon=levels[-1].lon, lat=levels[-1].lat, rfl=levels[-1].rfl)
     if use_center:
         tw.set_cell_mean(levels[-1].height)
-        if do_thinwalls:
+        if config.calc_thinwalls:
             tw.set_edge_to_step(tw_interp)
     else:
         tw.set_center_from_corner(levels[-1].height)
-        if do_thinwalls:
+        if config.calc_thinwalls:
             tw.set_edge_from_corner(levels[-1].height)
-    if do_effective:
+    if config.calc_effective_tw:
         tw.init_effective_values()
     if timers: clock.delta('init thinwalls')
     if verbose: print('Refine level {:} {:}'.format(tw.rfl, tw))
@@ -807,7 +803,7 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, tw
     if timers: loop_start = clock.now
     for _ in range(nrfl):
         if timers: clock.update_prev()
-        if do_effective:
+        if config.calc_effective_tw:
             # # old methods
             # patho_ew = tw.diagnose_EW_pathway()
             # patho_ns = tw.diagnose_NS_pathway()
@@ -831,13 +827,13 @@ def topo_gen(grid, do_roughness=False, do_gradient=False, do_thinwalls=False, tw
             tw.limit_connections(connections=pathn_c, verbose=False)
             tw.lift_ave_max()
         if timers: clock.delta('refine loop (effective thinwalls)')
-        tw = tw.coarsen(do_thinwalls=do_thinwalls, do_effective=do_effective)
+        tw = tw.coarsen(do_thinwalls=config.calc_thinwalls, do_effective=config.calc_effective_tw)
         if verbose: print('Refine level {:} {:}'.format(tw.rfl, tw))
         if timers: clock.delta('refine loop (coarsen grid)')
     if timers: clock.delta('refine loop (total)', ref_time=loop_start)
 
     out = subgrid_roughness_gradient(
-        levels, tw.c_simple.ave, do_roughness=do_roughness, do_gradient=do_gradient, Idx=grid.Idx, Idy=grid.Idy)
+        levels, tw.c_simple.ave, do_roughness=config.calc_roughness, do_gradient=config.calc_gradient, Idx=grid.Idx, Idy=grid.Idy)
     tw.roughness, tw.gradient = out['h2'], out['gh']
     if timers: clock.delta("roughness/gradient")
 

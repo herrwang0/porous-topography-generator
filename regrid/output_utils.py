@@ -7,6 +7,22 @@ Pure helper functions for creating files and timers
 import numpy
 import netCDF4
 import time
+from dataclasses import dataclass
+
+@dataclass
+class CalcConfig:
+    calc_mean_only: bool = False
+    _thinwalls: bool = True
+    _effective_tw: bool = False
+    calc_roughness: bool = False
+    calc_gradient: bool = False
+
+    @property
+    def calc_thinwalls(self):
+        return self._thinwalls and (not self.calc_mean_only)
+    @property
+    def calc_effective_tw(self):
+        return self.calc_thinwalls and self._effective_tw
 
 class TimeLog(object):
     """An object logging times"""
@@ -34,7 +50,7 @@ class TimeLog(object):
             if dt<9000: print( '{:>10}ms : {}'.format( dt, label) )
             else: print( '{:>10}secs : {}'.format( dt / 1000, label) )
 
-def write_output(domain, filename, mode='center', do_effective=False, do_roughness=False, do_gradient=False, output_refine=True,
+def write_output(domain, filename, config=CalcConfig(), output_refine=True,
                  format='NETCDF3_64BIT_OFFSET', history='', description=None,
                  inverse_sign=True, elev_unit='m', dtype=numpy.float64, dtype_int=numpy.int32):
     """Output to netCDF
@@ -70,12 +86,12 @@ def write_output(domain, filename, mode='center', do_effective=False, do_roughne
     varout = ncout.createVariable('nx', numpy.float64, ('nx',)); varout.cartesian_axis = 'X'
     varout = ncout.createVariable('ny', numpy.float64, ('ny',)); varout.cartesian_axis = 'Y'
 
-    if mode == 'mean':
+    if config.calc_mean_only:
         description = "Mean topography at cell-centers" if description is None else description
         write_variable(
             ncout, signed(domain.c_simple.ave), 'depth', 'c', long_name='Cell-center mean topography')
 
-    elif mode == 'center':
+    elif not config.calc_thinwalls:
         description = "Min, mean and max elevation at cell-centers" if description is None else description
         write_variable(
             ncout, signed(domain.c_simple.ave), 'depth', 'c', long_name='Simple cell-center mean topography')
@@ -84,7 +100,7 @@ def write_output(domain, filename, mode='center', do_effective=False, do_roughne
         write_variable(
             ncout, signed(domain.c_simple.low), 'depth_low', 'c', long_name='Simple cell-center lowest topography')
 
-    elif mode == 'all':
+    else:
         description = "Min, mean and max elevation at cell-centers and u/v-edges"  if description is None else description
         # cell-centers
         write_variable(
@@ -110,7 +126,7 @@ def write_output(domain, filename, mode='center', do_effective=False, do_roughne
         write_variable(
             ncout, signed(domain.v_simple.low), 'v_simple_low', 'v', long_name='Simple v-edge lowest topography')
 
-        if do_effective:
+        if config.calc_effective_tw:
             # cell-centers
             write_variable(
                 ncout, signed(domain.c_effective.ave), 'c_effective_ave', 'c', long_name='Effective cell-center mean topography')
@@ -135,23 +151,20 @@ def write_output(domain, filename, mode='center', do_effective=False, do_roughne
             write_variable(
                 ncout, signed(domain.v_effective.low), 'v_effective_low', 'v', long_name='Effective v-edge lowest topography')
 
-    else:
-        raise ValueError(f"write_output: unknown mode = {mode}")
-
     # refinement levels
     if output_refine:
         write_variable(
             ncout, domain.c_rfl, 'c_rfl', 'c', long_name='Refinement level at cell-centers', units='nondim', dtype=dtype_int)
-        if mode == 'all':
+        if config.calc_thinwalls:
             write_variable(
                 ncout, domain.u_rfl, 'u_rfl', 'u', long_name='Refinement level at u-edges', units='nondim', dtype=dtype_int)
             write_variable(
                 ncout, domain.v_rfl, 'v_rfl', 'v', long_name='Refinement level at v-edges', units='nondim', dtype=dtype_int)
 
-    if do_roughness:
+    if config.calc_roughness:
         write_variable(
             ncout, domain.roughness, 'h2', 'c', long_name='Sub-grid plane-fit roughness', units='m2')
-    if do_gradient:
+    if config.calc_gradient:
         write_variable(
             ncout, domain.gradient, 'gradh', 'c', long_name='Sub-grid plane-fit gradient', units='nondim')
 
