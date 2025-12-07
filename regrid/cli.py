@@ -177,7 +177,7 @@ def main():
         twlist = topo_gen_mp(subdomains.flatten(), nprocs=nprocs,
                              refine_config=refine_config, save_hits=(not (hm is None)), verbose=True, timers=True, tw_interp=args.thinwalls_interp)
     else: # with nprocs==1, multiprocessing is not used.
-        twlist = [topo_gen(sdm, **refine_config.to_kwargs(), **topo_gen_args) for sdm in subdomains.flatten()]
+        twlist = [topo_gen(sdm, refine_config=refine_config, **topo_gen_args) for sdm in subdomains.flatten()]
 
     if topo_gen_args['save_hits']:
         twlist, hitlist = zip(*twlist)

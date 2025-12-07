@@ -478,7 +478,7 @@ class Domain(ThinWalls.ThinWalls):
                         TR = tiles[iy,ix+1]
                     else:
                         TR = tiles[iy,0]
-                    edgeloc = '{} and {}'.format(this.bbox.position, TR.bbox.position)
+                    edgeloc = '{} and {}'.format(this.position, TR.position)
                     self.u_simple[jsg:jeg, ieg] = match_edges(this.u_simple[jst:jet,iet],
                         TR.u_simple[jst:jet,ist], this.mrfl, TR.mrfl,
                         tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)')
@@ -489,7 +489,7 @@ class Domain(ThinWalls.ThinWalls):
                             tolerance=tolerance, verbose=verbose, message=edgeloc+' (effective)')
                 if iy<npj-1:
                     TU = tiles[iy+1,ix]
-                    edgeloc = '{} and {}'.format(this.bbox.position, TU.bbox.position)
+                    edgeloc = '{} and {}'.format(this.position, TU.position)
                     self.v_simple[jeg,isg:ieg] = match_edges(this.v_simple[jet,ist:iet],
                         TU.v_simple[jst,ist:iet], this.mrfl, TU.mrfl,
                         tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)')
@@ -511,7 +511,7 @@ class Domain(ThinWalls.ThinWalls):
                     (_, _, isgf, iegf), _ = self.pelayout[-1,npi-ix-1]
 
                     this, TU = tiles[-1,ix], tiles[-1,npi-ix-1]
-                    edgeloc = '{} and {}'.format(this.bbox.position, TU.bbox.position)
+                    edgeloc = '{} and {}'.format(this.position, TU.position)
                     (nj1, ni1), (nj2, ni2) = this.shape, TU.shape
                     jet1, ist1, iet1 = nj1-halo, halo, ni1-halo
                     jet2, ist2, iet2 = nj2-halo, -ni2+halo-1, ni2-halo-1
@@ -534,7 +534,7 @@ class Domain(ThinWalls.ThinWalls):
                     this = tiles[-1,npi//2]
                     nj, ni = this.shape
                     nhf = (ied-ist)//2
-                    edgeloc = '{}'.format(this.bbox.position)
+                    edgeloc = '{}'.format(this.position)
                     self.v_simple[-1,ist:ist+nhf] = match_edges(this.v_simple[nj-halo,halo:halo+nhf],
                         this.v_simple[nj-halo,halo+nhf:ni-halo:][::-1], this.mrfl, this.mrfl,
                         tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)')
