@@ -5,6 +5,111 @@ Pure helper functions for creating tiles
 """
 
 import numpy
+from dataclasses import dataclass
+from typing import Tuple, Union
+
+@dataclass(frozen=True)
+class BoundaryBox:
+    """Rectangular subdomain boundary defined in global coordinates.
+
+    Parameters
+    ----------
+    j_start, j_end, i_start, i_end : int
+        Global computation domain j-index and i-index range.
+    halo : int or (int, int)
+        Halo width. If a single integer is given, it is applied to both
+        j and i directions. If a tuple, interpreted as (halo_j, halo_i).
+    """
+
+    j_start: int
+    j_end: int
+    i_start: int
+    i_end: int
+    halo: Union[int, Tuple[int, int]] = 0
+
+    def __post_init__(self):
+        # Convert single halo to a (halo_j, halo_i) tuple
+        if isinstance(self.halo, int):
+            object.__setattr__(self, "halo", (self.halo, self.halo))
+        elif (
+            isinstance(self.halo, tuple)
+            and len(self.halo) == 2
+            and all(isinstance(h, int) for h in self.halo)
+        ):
+            pass
+        else:
+            raise ValueError("halo must be an int or a tuple of two ints.")
+
+        if not (self.j_end > self.j_start and self.i_end > self.i_start):
+            raise ValueError("End indices must be greater than start indices.")
+
+    @property
+    def global_compute_j_slice(self) -> slice:
+        """Full global j-slice excluding halo."""
+        return slice(self.j_start, self.j_end)
+
+    @property
+    def global_compute_i_slice(self) -> slice:
+        """Full global i-slice excluding halo."""
+        return slice(self.i_start, self.i_end)
+
+    @property
+    def global_compute_box(self) -> Tuple[slice, slice]:
+        """Full global box including halo."""
+        return (self.global_compute_j_slice, self.global_compute_i_slice)
+
+    @property
+    def halo_j(self) -> int:
+        return self.halo[0]
+
+    @property
+    def halo_i(self) -> int:
+        return self.halo[1]
+
+    @property
+    def compute_nj(self) -> int:
+        """nj of the compute region."""
+        return self.j_start.stop - self.global_j_slice.start
+
+    @property
+    def compute_ni(self) -> int:
+        """ni of the compute region."""
+        return self.global_i_slice.stop - self.global_i_slice.start
+
+    @property
+    def compute_shape(self) -> int:
+        """Shape of the compute region."""
+        return ( self.compute_nj, self.compute_ni )
+
+    @property
+    def nj(self) -> int:
+        """Data nj of the region."""
+        return self.compute_nj + 2 * self.halo_j
+
+    @property
+    def ni(self) -> int:
+        """Data ni of the region."""
+        return self.compute_ni + 2 * self.halo_i
+
+    @property
+    def shape(self) -> Tuple[int, int]:
+        """Data shape of the region."""
+        return ( self.nj, self.ni )
+
+    @property
+    def compute_j_slice(self) -> slice:
+        """Compute local j-slice (excludes halo)."""
+        return slice(self.halo_j, self.nj - self.halo_j)
+
+    @property
+    def compute_i_slice(self) -> slice:
+        """Compute local i-slice (excludes halo)."""
+        return slice(self.halo_i, self.ni - self.halo_i)
+
+    @property
+    def compute_box(self) -> Tuple[slice, slice]:
+        """Compute local box."""
+        return self.compute_j_slice, self.compute_i_slice
 
 def slice_array(arr, box, position='corner', fold_north=True, cyclic_zonal=True, fold_south=False):
     """Slice a 2D field with extend indices that cover halos

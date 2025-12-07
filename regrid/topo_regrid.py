@@ -6,8 +6,8 @@ import functools
 from .external.thinwall.python import GMesh
 from .external.thinwall.python import ThinWalls
 from .roughness import subgrid_roughness_gradient
-from .tile_utils import slice_array, decompose_domain, normlize_longitude, box_halo
-from .output_utils import TimeLog, CalcConfig
+from .tile_utils import slice_array, decompose_domain, normlize_longitude, box_halo, BoundaryBox
+from .output_utils import TimeLog, CalcConfig, RefineConfig
 # from .north_pole import NorthPoleMask
 
 class HitMap(GMesh.GMesh):
@@ -56,7 +56,7 @@ class RefineWrapper(GMesh.GMesh):
     print(self) offers a detailed overlook of the target and source grid information.
     """
     def __init__(self, lon=None, lat=None, id=(0,0), is_geo_coord=True,
-                 eds=None, subset_eds=False, src_halo=0, mask_recs=[], refine_loop_args={}):
+                 eds=None, subset_eds=False, src_halo=0, mask_recs=[], refine_config=RefineConfig()):
         """
         Parameters
         ----------
@@ -91,7 +91,7 @@ class RefineWrapper(GMesh.GMesh):
         super().__init__(lon=lon, lat=lat, is_geo_coord=is_geo_coord)
         self.id = id
         self.north_masks = mask_recs
-        self.refine_loop_args = refine_loop_args
+        self.refine_config = refine_config
         self._fit_src_coords(eds, subset_eds=subset_eds, halo=src_halo)
 
     def __str__(self):
@@ -135,12 +135,12 @@ class RefineWrapper(GMesh.GMesh):
 
     def refine_loop(self, verbose=False, timers=False):
         """A self-contained version of GMesh.refine_loop()"""
-        return super().refine_loop(self.eds, mask_res=self.north_masks, verbose=verbose, timers=timers, **self.refine_loop_args)
+        return super().refine_loop(self.eds, mask_res=self.north_masks, verbose=verbose, timers=timers, **self.refine_config.to_kwargs())
 
 class Domain(ThinWalls.ThinWalls):
     """A container for regrided topography
     """
-    def __init__(self, lon=None, lat=None, Idx=None, Idy=None, is_geo_coord=True, reentrant_x=False, fold_n=False, num_north_pole=0, pole_radius=0.25):
+    def __init__(self, lon=None, lat=None, Idx=None, Idy=None, is_geo_coord=True, reentrant_x=False, fold_n=False, bbox=None, num_north_pole=0, pole_radius=0.25):
         """
         Parameters
         ----------
@@ -161,6 +161,12 @@ class Domain(ThinWalls.ThinWalls):
         """
         super().__init__(lon=lon, lat=lat, is_geo_coord=is_geo_coord)
         self.Idx, self.Idy = Idx, Idy
+
+        if bbox:
+            assert (self.nj == bbox.nj) and (self.ni == bbox.ni), 'bbox incorrect'
+            self.bbox = bbox
+        else:
+            self.bbox = BoundaryBox(j_start=0, j_end=self.nj, i_start=0, i_end=self.ni, halo=0)
 
         self.reentrant_x = reentrant_x
         self.fold_n = fold_n
@@ -191,7 +197,7 @@ class Domain(ThinWalls.ThinWalls):
         return '\n'.join(disp)
 
     def create_subdomains(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, norm_lon=None, eds=None, subset_eds=True, src_halo=0,
-                          refine_loop_args={}, verbose=False):
+                          refine_config={}, verbose=False):
         """Creates a list of sub-domains with corresponding source lon, lat and elev sections.
 
         Parameters
@@ -205,7 +211,7 @@ class Domain(ThinWalls.ThinWalls):
             Source coordinates and topography
         src_halo : integer, optional
             Halo size of the source grid in either direction.
-        refine_loop_args : dict, optional
+        refine_config : RefineConfig, optional
         verbose : bool, optional
 
         Returns
@@ -244,7 +250,7 @@ class Domain(ThinWalls.ThinWalls):
                 masks = self.north_mask.find_local_masks((jst, jed, ist, ied), tgt_halo)
                 chunks[pe_j, pe_i] = RefineWrapper(lon=lon, lat=lat, id=(pe_j, pe_i), is_geo_coord=self.is_geo_coord,
                                                    eds=eds, subset_eds=subset_eds, src_halo=src_halo,
-                                                   mask_recs=masks, refine_loop_args=refine_loop_args)
+                                                   mask_recs=masks, refine_config=refine_config)
                 if self.Idx is not None:
                     Idx = slice_array(self.Idx, box=box_data, position='center',
                                       cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
@@ -748,7 +754,7 @@ def match_edges(edge1, edge2, rfl1, rfl2, tolerance=0, verbose=True, message='')
             print(message+' have the same edge but different refinement levels '+str_rfls+'.')
         return edge1
 
-def topo_gen(grid, config=CalcConfig(), tw_interp='max', save_hits=True, verbose=True, timers=False):
+def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), tw_interp='max', save_hits=True, verbose=True, timers=False):
     """The main function for generating topography
 
     Parameters
@@ -766,8 +772,7 @@ def topo_gen(grid, config=CalcConfig(), tw_interp='max', save_hits=True, verbose
     if verbose:
         print('topo_gen() for domain {:}'.format(grid.id))
 
-    use_center = grid.refine_loop_args['use_center']
-    if (not use_center) and (config.calc_roughness or config.calc_gradient):
+    if (not refine_config.use_center) and (config.calc_roughness or config.calc_gradient):
         raise Exception('"use_center" needs to be used for roughness or gradient')
     if timers: clock.delta('setup topo_gen')
 
@@ -777,17 +782,19 @@ def topo_gen(grid, config=CalcConfig(), tw_interp='max', save_hits=True, verbose
     if timers: clock.delta('refine grid')
 
     # Step 2: Project elevation to the finest grid
-    levels[-1].project_source_data_onto_target_mesh(grid.eds, use_center=use_center, work_in_3d=grid.refine_loop_args['work_in_3d'])
+    levels[-1].project_source_data_onto_target_mesh(
+        grid.eds, use_center=refine_config.use_center, work_in_3d=refine_config.work_in_3d
+    )
     if save_hits:
         lon_src, lat_src = grid.eds.lon_coord, grid.eds.lat_coord
         hits = HitMap(shape=(lat_src.size, lon_src.size))
-        hits[:] = levels[-1].source_hits(grid.eds, use_center=use_center, singularity_radius=0.0)
+        hits[:] = levels[-1].source_hits(grid.eds, use_center=refine_config.use_center, singularity_radius=0.0)
         hits.box = (lat_src.start, lat_src.stop, lon_src.start, lon_src.stop)
     if timers: clock.delta('assign data')
 
     # Step 2: Create a ThinWalls object on the finest grid and coarsen back
     tw = ThinWalls.ThinWalls(lon=levels[-1].lon, lat=levels[-1].lat, rfl=levels[-1].rfl)
-    if use_center:
+    if refine_config.use_center:
         tw.set_cell_mean(levels[-1].height)
         if config.calc_thinwalls:
             tw.set_edge_to_step(tw_interp)

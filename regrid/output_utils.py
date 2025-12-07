@@ -7,7 +7,20 @@ Pure helper functions for creating files and timers
 import numpy
 import netCDF4
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
+
+@dataclass
+class RefineConfig:
+    use_center : bool = True
+    resolution_limit : bool = False
+    fixed_refine_level : int = -1
+    work_in_3d : bool = False
+    singularity_radius : float = 0.25
+    max_mb : float = 32000
+    max_stages : int = 32
+
+    def to_kwargs(self):
+        return asdict(self)
 
 @dataclass
 class CalcConfig:
