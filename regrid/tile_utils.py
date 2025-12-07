@@ -8,6 +8,8 @@ import numpy
 from dataclasses import dataclass
 from typing import Tuple, Union
 
+GLOBAL_POS = object()
+
 @dataclass(frozen=True)
 class BoundaryBox:
     """Rectangular subdomain boundary defined in global coordinates.
@@ -19,6 +21,8 @@ class BoundaryBox:
     halo : int or (int, int)
         Halo width. If a single integer is given, it is applied to both
         j and i directions. If a tuple, interpreted as (halo_j, halo_i).
+    position : tuple[int, int]
+        The tile's index in the global layout grid. (iy, ix) = (row_index, column_index).
     """
 
     j_start: int
@@ -26,6 +30,7 @@ class BoundaryBox:
     i_start: int
     i_end: int
     halo: Union[int, Tuple[int, int]] = 0
+    position: Union[Tuple[int, int], object] = GLOBAL_POS
 
     def __post_init__(self):
         # Convert single halo to a (halo_j, halo_i) tuple
@@ -42,6 +47,10 @@ class BoundaryBox:
 
         if not (self.j_end > self.j_start and self.i_end > self.i_start):
             raise ValueError("End indices must be greater than start indices.")
+
+    @property
+    def is_global(self) -> bool:
+        return self.position is GLOBAL_POS
 
     @property
     def global_compute_j_slice(self) -> slice:
