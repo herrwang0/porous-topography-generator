@@ -4,7 +4,7 @@ import numpy
 import netCDF4
 from .external.thinwall.python import GMesh
 from .output_utils import write_output, write_hitmap, TimeLog, CalcConfig, RefineConfig
-from .topo_regrid import Domain, HitMap, topo_gen_mp, topo_gen
+from .topo_regrid import Domain, HitMap, topo_gen_mp, topo_gen, NorthPoleMask
 
 def main():
     parser = argparse.ArgumentParser(description='Objective topography regridding',
@@ -167,16 +167,17 @@ def main():
     #                      refine_loop_args=refine_options, calc_args=calc_args, hitmap=hm,
     #                      bnd_tol_level=bnd_tol_level, verbose=args.verbose)
     subdomains = dm.create_subdomains(pelayout=pe, tgt_halo=args.tgt_halo, eds=eds, subset_eds=True, src_halo=args.src_halo,
-                                      refine_config=refine_config, verbose=False)
+                                      verbose=False)
     # clock.delta('Domain decomposition')
 
     topo_gen_args = {}
     topo_gen_args.update({'tw_interp': args.thinwalls_interp, 'save_hits': not (hm is None), 'verbose': True, 'timers': True})
 
     if nprocs>1:
-        twlist = topo_gen_mp(subdomains.flatten(), nprocs=nprocs, topo_gen_args=topo_gen_args)
+        twlist = topo_gen_mp(subdomains.flatten(), nprocs=nprocs,
+                             refine_config=refine_config, save_hits=(not (hm is None)), verbose=True, timers=True, tw_interp=args.thinwalls_interp)
     else: # with nprocs==1, multiprocessing is not used.
-        twlist = [topo_gen(sdm, **topo_gen_args) for sdm in subdomains.flatten()]
+        twlist = [topo_gen(sdm, **refine_config.to_kwargs(), **topo_gen_args) for sdm in subdomains.flatten()]
 
     if topo_gen_args['save_hits']:
         twlist, hitlist = zip(*twlist)

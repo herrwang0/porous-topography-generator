@@ -47,6 +47,125 @@ class HitMap(GMesh.GMesh):
         """Plots hit map"""
         return axis.pcolormesh( self.lon, self.lat, self[:,:], **kwargs )
 
+class NorthPoleMask:
+    def __init__(self, domain, counts=0, radius=0.25):
+        """
+        Parameters
+        ----------
+        domain : Domain object
+            The domain where the mask is to be found.
+        counts : integer, optional
+            Number of north poles in the target grid. E.g. there are two north poles in the bi-polar cap.
+        radius : float
+            The radius of the north pole region used to a) decide the mask of north pole in the target grid;
+            b) ignore the hits in source grid
+        verbose : bool
+        """
+        self.domain = domain
+        self.counts = counts
+        self.radius = radius
+        self._masks = self._find_north_pole_rectangles()
+
+    def __str__(self):
+        disp = [
+            f'North Pole rectangles (radius = {self.radius:5.2f}{chr(176):1s}) in {repr(self.domain)}'
+        ]
+        for box in self:
+            idx_str = ','.join([f"{idx:d}" for idx in box])
+            disp.append( f'  js,je,is,ie: {idx_str}, shape: ({box[1]-box[0]}, {box[3]-box[2]})' )
+        return '\n'.join(disp)
+
+    def __getitem__(self, index):
+        return self._masks[index]
+
+    def _find_north_pole_rectangles(self):
+        """Returns the extented rectangles of the grids enclosed by a latitudinal circle
+        Output:
+        ----------
+        recs : list of tuples
+            Indices of rectangle boxes. Number of boxes depends on num_north_pole.
+        """
+        domain = self.domain
+        jj, ii = numpy.where(domain.lat > (90.0 - self.radius))
+
+        if jj.size==0 or ii.size==0 or self.counts==0:
+            recs = []
+        elif self.counts==1:
+            recs = [(jj.min(), jj.max(), ii.min(), ii.max())]
+        elif self.counts==2:
+            jjw = jj[ii<domain.ni//2]; iiw = ii[ii<domain.ni//2]
+            jje = jj[ii>domain.ni//2]; iie = ii[ii>domain.ni//2]
+            assert numpy.all(jjw==jje), 'nj in the two mask domains mismatch.'
+            jj = jjw
+            assert (jjw.max()==domain.nj), 'mask domains do not reach the north boundary.'
+            assert (iiw.min()+iie.max()==domain.ni) and ((iiw.max()+iie.min()==domain.ni)), \
+                'ni in the two mask domains mismatch.'
+            recs = [(jj.min(), jj.max(), iiw.min(), iiw.max()),
+                    (jj.min(), jj.max(), iie.min(), iie.max())]
+            # self.masks = [(jj.min(), 2*domain.nj-jj.min(), iiw.min(), iiw.max()),
+            #                    (jj.min(), 2*domain.nj-jj.min(), iie.min(), iie.max())] # extend passing the northern boundary for halos
+        else:
+            raise Exception('Currently only two north pole rectangles are supported.')
+        return recs
+
+    def find_local_masks(self, box, halo):
+        """Finds where the north pole rectangles overlap with the subdomain"""
+        masks = []
+        jst, jed, ist, ied = box
+        jsth, jedh, isth, iedh = jst-halo, jed+halo, ist-halo, ied+halo
+        for jstm, jedm, istm, iedm in self:
+            if (not ((istm>=iedh) or iedm<=isth)) and (not ((jstm>=jedh) or (jedm<=jsth))):
+                # Relative indices
+                j0, j1, i0, i1 = max(jstm,jsth)-jsth, min(jedm,jedh)-jsth, max(istm,isth)-isth, min(iedm,iedh)-isth
+                # if mask boundary is beyond subdomain boundary but within halo, ignore halo
+                if jstm<=jst:
+                    j0 = 0
+                if jedm>=jed:
+                    j1 = jedh - jsth
+                if istm<=ist:
+                    i0 = 0
+                if iedm>=ied:
+                    i1 = iedh - isth
+                # if jedm==self.nj and jed>self.nj: j1 = jed-jst
+                # # The following addresses a very trivial case when the mask reaches
+                # # the southern bounndary, which may only happen in tests.
+                # if jstm==0 and jst<0: j0 = 0
+                masks.append((j0, j1, i0, i1))
+        return masks
+
+    def create_mask_domain(self, tgt_halo=0, norm_lon=True, pole_radius=0.25):
+        """Creates a domain for the masked north pole region
+
+        Parameters
+        ----------
+        tgt_halo : int, optional
+            Halo size
+        pole_radius : float, optional
+            Polar radius in the new mask domain
+
+        Output
+        ----------
+        mds : A list of Domain object
+        """
+
+        domain = self.domain
+        mds = []
+        for mask in self:
+            mask_box = box_halo(mask, tgt_halo)
+
+            lon = slice_array(domain.lon, box=mask_box, cyclic_zonal=False, fold_north=True)
+            lat = slice_array(domain.lat, box=mask_box, cyclic_zonal=False, fold_north=True)
+            if norm_lon: lon = normlize_longitude(lon, lat)
+
+            Idx, Idy = None, None
+            if domain.Idx is not None:
+                Idx = slice_array(domain.Idx, box=mask_box, position='center', cyclic_zonal=False, fold_north=True)
+            if domain.Idy is not None:
+                Idy = slice_array(domain.Idy, box=mask_box, position='center', cyclic_zonal=False, fold_north=True)
+
+            mds.append( Domain(lon=lon, lat=lat, Idx=Idx, Idy=Idy, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius) )
+        return mds
+
 class RefineWrapper(GMesh.GMesh):
     """A wrapper for grid refinement (of a subdomain)
 
@@ -140,7 +259,9 @@ class RefineWrapper(GMesh.GMesh):
 class Domain(ThinWalls.ThinWalls):
     """A container for regrided topography
     """
-    def __init__(self, lon=None, lat=None, Idx=None, Idy=None, is_geo_coord=True, reentrant_x=False, fold_n=False, bbox=None, num_north_pole=0, pole_radius=0.25):
+    def __init__(self, lon=None, lat=None, Idx=None, Idy=None, is_geo_coord=True,
+                 reentrant_x=False, fold_n=False, bbox=None, num_north_pole=0, pole_radius=0.25, np_masks=[],
+                 eds=None, subset_eds=False, src_halo=0):
         """
         Parameters
         ----------
@@ -172,13 +293,16 @@ class Domain(ThinWalls.ThinWalls):
         self.fold_n = fold_n
         if self.fold_n:
             assert self.ni%2==0, 'An odd number ni does not work with bi-polar cap.'
-            num_north_pole=2
 
         if num_north_pole > 0:
             self.north_mask = NorthPoleMask(self, counts=num_north_pole, radius=pole_radius)
+        else:
+            self.north_mask = np_masks
 
         # self.pole_radius = pole_radius
         # self.north_mask = self.find_north_pole_rectangles(num_north_pole=num_north_pole)
+
+        if eds: self._fit_src_coords(eds, subset_eds=subset_eds, halo=src_halo)
 
     def __str__(self):
         if self.is_geo_coord:
@@ -196,8 +320,22 @@ class Domain(ThinWalls.ThinWalls):
         if hasattr(self, 'north_mask'): disp.append(str(self.north_mask))
         return '\n'.join(disp)
 
+    def _fit_src_coords(self, eds, subset_eds=True, halo=0):
+        """Returns the four-element indices of source grid that covers the current domain."""
+        if subset_eds:
+            Is, Ie, Js, Je = eds.bb_slices( self.lon, self.lat, halo_lon=halo, halo_lat=halo )
+            # If the North Pole is encompassed in the domain, we will need the full longitude circle,
+            # regardless what bb_slices thinks.
+            for jj, ii in self.np_index:
+                if (jj>0 and jj<self.shape[0]+1) or (ii>0 and ii<self.shape[1]+1): # North pole is NOT on the boundaries.
+                    Is, Ie = 0, eds.ni
+                    break
+            self.eds = eds.subset(Is, Ie, Js, Je)
+        else:
+            self.eds = eds
+
     def create_subdomains(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, norm_lon=None, eds=None, subset_eds=True, src_halo=0,
-                          refine_config={}, verbose=False):
+                          verbose=False):
         """Creates a list of sub-domains with corresponding source lon, lat and elev sections.
 
         Parameters
@@ -242,26 +380,25 @@ class Domain(ThinWalls.ThinWalls):
             for pe_i, (ist, ied) in enumerate(i_domain):
                 self.pelayout[pe_j, pe_i] = ((jst, jed, ist, ied), tgt_halo) # indices for cell centers
 
-                box_data = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
-                lon = slice_array(self.lon, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
-                lat = slice_array(self.lat, box=box_data, cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
+                bbox = BoundaryBox(jst, jed, ist, ied, tgt_halo, (pe_j, pe_i))
+                lon = slice_array(self.lon, bbox=bbox, cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
+                lat = slice_array(self.lat, bbox=bbox, cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
                 if norm_lon: lon = normlize_longitude(lon, lat)
 
                 masks = self.north_mask.find_local_masks((jst, jed, ist, ied), tgt_halo)
-                chunks[pe_j, pe_i] = RefineWrapper(lon=lon, lat=lat, id=(pe_j, pe_i), is_geo_coord=self.is_geo_coord,
-                                                   eds=eds, subset_eds=subset_eds, src_halo=src_halo,
-                                                   mask_recs=masks, refine_config=refine_config)
-                if self.Idx is not None:
-                    Idx = slice_array(self.Idx, box=box_data, position='center',
-                                      cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
-                else:
-                    Idx = None
-                if self.Idy is not None:
-                    Idy = slice_array(self.Idy, box=box_data, position='center',
-                                      cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
-                else:
-                    Idy = None
-                chunks[pe_j, pe_i].Idx, chunks[pe_j, pe_i].Idy = Idx, Idy
+                # chunks[pe_j, pe_i] = RefineWrapper(lon=lon, lat=lat, id=(pe_j, pe_i), is_geo_coord=self.is_geo_coord,
+                #                                    eds=eds, subset_eds=subset_eds, src_halo=src_halo,
+                #                                    mask_recs=masks, refine_config=refine_config)
+                if self.Idx is None: Idx = None
+                else: Idx = slice_array(self.Idx, bbox=bbox, position='center', cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
+                if self.Idy is None: Idy = None
+                else: Idy = slice_array(self.Idy, bbox=bbox, position='center', cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
+                # chunks[pe_j, pe_i].Idx, chunks[pe_j, pe_i].Idy = Idx, Idy
+
+                chunks[pe_j, pe_i] = Domain(
+                    lon=lon, lat=lat, Idx=Idx, Idy=Idy, is_geo_coord=self.is_geo_coord,
+                    reentrant_x=False, fold_n=False, bbox=bbox, np_masks=masks, eds=eds, subset_eds=subset_eds, src_halo=src_halo
+                )
 
                 if verbose:
                     print(chunks[pe_j, pe_i], '\n')
@@ -306,7 +443,7 @@ class Domain(ThinWalls.ThinWalls):
         # Put the list of ThinWalls on a 2D array to utilize numpy array's slicing
         tiles = numpy.empty( (npj, npi), dtype=object )
         for tw in thinwalls_list:
-            tiles[tw.id] = tw
+            tiles[tw.position] = tw
 
         self.c_rfl = numpy.zeros( self.shape, dtype=numpy.int32 )
         if config.calc_thinwalls:
@@ -341,7 +478,7 @@ class Domain(ThinWalls.ThinWalls):
                         TR = tiles[iy,ix+1]
                     else:
                         TR = tiles[iy,0]
-                    edgeloc = '{} and {}'.format(this.id, TR.id)
+                    edgeloc = '{} and {}'.format(this.bbox.position, TR.bbox.position)
                     self.u_simple[jsg:jeg, ieg] = match_edges(this.u_simple[jst:jet,iet],
                         TR.u_simple[jst:jet,ist], this.mrfl, TR.mrfl,
                         tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)')
@@ -352,7 +489,7 @@ class Domain(ThinWalls.ThinWalls):
                             tolerance=tolerance, verbose=verbose, message=edgeloc+' (effective)')
                 if iy<npj-1:
                     TU = tiles[iy+1,ix]
-                    edgeloc = '{} and {}'.format(this.id, TU.id)
+                    edgeloc = '{} and {}'.format(this.bbox.position, TU.bbox.position)
                     self.v_simple[jeg,isg:ieg] = match_edges(this.v_simple[jet,ist:iet],
                         TU.v_simple[jst,ist:iet], this.mrfl, TU.mrfl,
                         tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)')
@@ -374,7 +511,7 @@ class Domain(ThinWalls.ThinWalls):
                     (_, _, isgf, iegf), _ = self.pelayout[-1,npi-ix-1]
 
                     this, TU = tiles[-1,ix], tiles[-1,npi-ix-1]
-                    edgeloc = '{} and {}'.format(this.id, TU.id)
+                    edgeloc = '{} and {}'.format(this.bbox.position, TU.bbox.position)
                     (nj1, ni1), (nj2, ni2) = this.shape, TU.shape
                     jet1, ist1, iet1 = nj1-halo, halo, ni1-halo
                     jet2, ist2, iet2 = nj2-halo, -ni2+halo-1, ni2-halo-1
@@ -397,7 +534,7 @@ class Domain(ThinWalls.ThinWalls):
                     this = tiles[-1,npi//2]
                     nj, ni = this.shape
                     nhf = (ied-ist)//2
-                    edgeloc = '{}'.format(this.id)
+                    edgeloc = '{}'.format(this.bbox.position)
                     self.v_simple[-1,ist:ist+nhf] = match_edges(this.v_simple[nj-halo,halo:halo+nhf],
                         this.v_simple[nj-halo,halo+nhf:ni-halo:][::-1], this.mrfl, this.mrfl,
                         tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)')
@@ -567,125 +704,6 @@ class Domain(ThinWalls.ThinWalls):
             north_masks = NorthPoleMask(radius=latc, counts=2)
             latc += lat_step
 
-class NorthPoleMask:
-    def __init__(self, domain, counts=0, radius=0.25):
-        """
-        Parameters
-        ----------
-        domain : Domain object
-            The domain where the mask is to be found.
-        counts : integer, optional
-            Number of north poles in the target grid. E.g. there are two north poles in the bi-polar cap.
-        radius : float
-            The radius of the north pole region used to a) decide the mask of north pole in the target grid;
-            b) ignore the hits in source grid
-        verbose : bool
-        """
-        self.domain = domain
-        self.counts = counts
-        self.radius = radius
-        self._masks = self._find_north_pole_rectangles()
-
-    def __str__(self):
-        disp = [
-            f'North Pole rectangles (radius = {self.radius:5.2f}{chr(176):1s}) in {repr(self.domain)}'
-        ]
-        for box in self:
-            idx_str = ','.join([f"{idx:d}" for idx in box])
-            disp.append( f'  js,je,is,ie: {idx_str}, shape: ({box[1]-box[0]}, {box[3]-box[2]})' )
-        return '\n'.join(disp)
-
-    def __getitem__(self, index):
-        return self._masks[index]
-
-    def _find_north_pole_rectangles(self):
-        """Returns the extented rectangles of the grids enclosed by a latitudinal circle
-        Output:
-        ----------
-        recs : list of tuples
-            Indices of rectangle boxes. Number of boxes depends on num_north_pole.
-        """
-        domain = self.domain
-        jj, ii = numpy.where(domain.lat > (90.0 - self.radius))
-
-        if jj.size==0 or ii.size==0 or self.counts==0:
-            recs = []
-        elif self.counts==1:
-            recs = [(jj.min(), jj.max(), ii.min(), ii.max())]
-        elif self.counts==2:
-            jjw = jj[ii<domain.ni//2]; iiw = ii[ii<domain.ni//2]
-            jje = jj[ii>domain.ni//2]; iie = ii[ii>domain.ni//2]
-            assert numpy.all(jjw==jje), 'nj in the two mask domains mismatch.'
-            jj = jjw
-            assert (jjw.max()==domain.nj), 'mask domains do not reach the north boundary.'
-            assert (iiw.min()+iie.max()==domain.ni) and ((iiw.max()+iie.min()==domain.ni)), \
-                'ni in the two mask domains mismatch.'
-            recs = [(jj.min(), jj.max(), iiw.min(), iiw.max()),
-                    (jj.min(), jj.max(), iie.min(), iie.max())]
-            # self.masks = [(jj.min(), 2*domain.nj-jj.min(), iiw.min(), iiw.max()),
-            #                    (jj.min(), 2*domain.nj-jj.min(), iie.min(), iie.max())] # extend passing the northern boundary for halos
-        else:
-            raise Exception('Currently only two north pole rectangles are supported.')
-        return recs
-
-    def find_local_masks(self, box, halo):
-        """Finds where the north pole rectangles overlap with the subdomain"""
-        masks = []
-        jst, jed, ist, ied = box
-        jsth, jedh, isth, iedh = jst-halo, jed+halo, ist-halo, ied+halo
-        for jstm, jedm, istm, iedm in self:
-            if (not ((istm>=iedh) or iedm<=isth)) and (not ((jstm>=jedh) or (jedm<=jsth))):
-                # Relative indices
-                j0, j1, i0, i1 = max(jstm,jsth)-jsth, min(jedm,jedh)-jsth, max(istm,isth)-isth, min(iedm,iedh)-isth
-                # if mask boundary is beyond subdomain boundary but within halo, ignore halo
-                if jstm<=jst:
-                    j0 = 0
-                if jedm>=jed:
-                    j1 = jedh - jsth
-                if istm<=ist:
-                    i0 = 0
-                if iedm>=ied:
-                    i1 = iedh - isth
-                # if jedm==self.nj and jed>self.nj: j1 = jed-jst
-                # # The following addresses a very trivial case when the mask reaches
-                # # the southern bounndary, which may only happen in tests.
-                # if jstm==0 and jst<0: j0 = 0
-                masks.append((j0, j1, i0, i1))
-        return masks
-
-    def create_mask_domain(self, tgt_halo=0, norm_lon=True, pole_radius=0.25):
-        """Creates a domain for the masked north pole region
-
-        Parameters
-        ----------
-        tgt_halo : int, optional
-            Halo size
-        pole_radius : float, optional
-            Polar radius in the new mask domain
-
-        Output
-        ----------
-        mds : A list of Domain object
-        """
-
-        domain = self.domain
-        mds = []
-        for mask in self:
-            mask_box = box_halo(mask, tgt_halo)
-
-            lon = slice_array(domain.lon, box=mask_box, cyclic_zonal=False, fold_north=True)
-            lat = slice_array(domain.lat, box=mask_box, cyclic_zonal=False, fold_north=True)
-            if norm_lon: lon = normlize_longitude(lon, lat)
-
-            Idx, Idy = None, None
-            if domain.Idx is not None:
-                Idx = slice_array(domain.Idx, box=mask_box, position='center', cyclic_zonal=False, fold_north=True)
-            if domain.Idy is not None:
-                Idy = slice_array(domain.Idy, box=mask_box, position='center', cyclic_zonal=False, fold_north=True)
-
-            mds.append( Domain(lon=lon, lat=lat, Idx=Idx, Idy=Idy, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius) )
-        return mds
-
 def match_edges(edge1, edge2, rfl1, rfl2, tolerance=0, verbose=True, message=''):
     """Check if two edges are identical and if not, return the proper one.
 
@@ -770,14 +788,14 @@ def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), tw_interp=
     if timers: clock = TimeLog(['setup topo_gen', 'refine grid', 'assign data', 'init thinwalls', 'roughness/gradient', 'total',
                                 'refine loop (total)', 'refine loop (effective thinwalls)', 'refine loop (coarsen grid)'])
     if verbose:
-        print('topo_gen() for domain {:}'.format(grid.id))
+        print('topo_gen() for domain {:}'.format(grid.bbox.position))
 
     if (not refine_config.use_center) and (config.calc_roughness or config.calc_gradient):
         raise Exception('"use_center" needs to be used for roughness or gradient')
     if timers: clock.delta('setup topo_gen')
 
     # Step 1: Refine grid
-    levels = grid.refine_loop(verbose=False, timers=False)
+    levels = grid.refine_loop(grid.eds, verbose=True, timers=False, **refine_config.to_kwargs())
     nrfl = levels[-1].rfl
     if timers: clock.delta('refine grid')
 
@@ -845,7 +863,7 @@ def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), tw_interp=
     if timers: clock.delta("roughness/gradient")
 
     # Step 3: Decorate the coarsened ThinWalls object
-    tw.id = grid.id
+    tw.position = grid.bbox.position
     tw.mrfl = nrfl
 
     if timers:
@@ -855,12 +873,12 @@ def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), tw_interp=
     if save_hits: return tw, hits
     else: return tw
 
-def topo_gen_mp(domain_list, nprocs=None, topo_gen_args={}):
+def topo_gen_mp(domain_list, nprocs=None, refine_config=RefineConfig(), save_hits=False, verbose=False, timers=False, tw_interp='max'):
     """A wrapper for multiprocessing topo_gen"""
     if nprocs is None:
         nprocs = len(domain_list)
     pool = multiprocessing.Pool(processes=nprocs)
-    tw_list = pool.map(functools.partial(topo_gen, **topo_gen_args), domain_list)
+    tw_list = pool.map(functools.partial(topo_gen, save_hits=save_hits, verbose=verbose, timers=timers, tw_interp=tw_interp, refine_config=refine_config), domain_list)
     pool.close()
     pool.join()
 

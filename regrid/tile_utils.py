@@ -53,6 +53,21 @@ class BoundaryBox:
         return self.position is GLOBAL_POS
 
     @property
+    def global_j_slice(self) -> slice:
+        """Full global j-slice including halo."""
+        return slice(self.j_start-self.halo[0], self.j_end+self.halo[0])
+
+    @property
+    def global_i_slice(self) -> slice:
+        """Full global i-slice including halo."""
+        return slice(self.i_start-self.halo[1], self.i_end+self.halo[0])
+
+    @property
+    def global_box(self) -> Tuple[slice, slice]:
+        """Full global box including halo."""
+        return (self.global_j_slice, self.global_i_slice)
+
+    @property
     def global_compute_j_slice(self) -> slice:
         """Full global j-slice excluding halo."""
         return slice(self.j_start, self.j_end)
@@ -64,7 +79,7 @@ class BoundaryBox:
 
     @property
     def global_compute_box(self) -> Tuple[slice, slice]:
-        """Full global box including halo."""
+        """Full global box excluding halo."""
         return (self.global_compute_j_slice, self.global_compute_i_slice)
 
     @property
@@ -78,12 +93,12 @@ class BoundaryBox:
     @property
     def compute_nj(self) -> int:
         """nj of the compute region."""
-        return self.j_start.stop - self.global_j_slice.start
+        return self.j_end - self.j_start
 
     @property
     def compute_ni(self) -> int:
         """ni of the compute region."""
-        return self.global_i_slice.stop - self.global_i_slice.start
+        return self.i_end - self.i_start
 
     @property
     def compute_shape(self) -> int:
@@ -120,7 +135,7 @@ class BoundaryBox:
         """Compute local box."""
         return self.compute_j_slice, self.compute_i_slice
 
-def slice_array(arr, box, position='corner', fold_north=True, cyclic_zonal=True, fold_south=False):
+def slice_array(arr, bbox, position='corner', fold_north=True, cyclic_zonal=True, fold_south=False):
     """Slice a 2D field with extend indices that cover halos
     Treatment of halos beyond the boundaries:
     If not specified, all boundaries are assumed to be reflective.
@@ -134,8 +149,8 @@ def slice_array(arr, box, position='corner', fold_north=True, cyclic_zonal=True,
     ----------
     arr : 2D ndarray
         Input field
-    box : tuple
-        Four-element tuple (jst, jed, ist, ied). The indices are for cell centers.
+    bbox : BoundaryBox
+        BoundaryBox that has four-element tuple (jst, jed, ist, ied). The indices are for cell centers.
     position : string, optional
         Grid position of the input field. Can be either 'center', 'corner', 'u', and 'v'. Default is 'corner'
     fold_north : bool, optional
@@ -154,7 +169,8 @@ def slice_array(arr, box, position='corner', fold_north=True, cyclic_zonal=True,
         sliced field
     """
     Nj, Ni = arr.shape
-    jst, jed, ist, ied = box
+    # jst, jed, ist, ied = box
+    jst, jed, ist, ied = bbox.global_j_slice.start, bbox.global_j_slice.stop, bbox.global_i_slice.start, bbox.global_i_slice.stop
 
     # Additional points for staggered locations (symmetric)
     if position == 'center':
