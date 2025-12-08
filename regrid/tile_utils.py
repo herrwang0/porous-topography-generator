@@ -16,7 +16,7 @@ class BoundaryBox:
 
     Parameters
     ----------
-    j_start, j_end, i_start, i_end : int
+    j0, j1, i0, i1 : int
         Global computation domain j-index and i-index range.
     halo : int or (int, int)
         Halo width. If a single integer is given, it is applied to both
@@ -25,10 +25,10 @@ class BoundaryBox:
         The tile's index in the global layout grid. (iy, ix) = (row_index, column_index).
     """
 
-    j_start: int
-    j_end: int
-    i_start: int
-    i_end: int
+    j0: int
+    j1: int
+    i0: int
+    i1: int
     halo: Union[int, Tuple[int, int]] = 0
     position: Union[Tuple[int, int], object] = GLOBAL_POS
 
@@ -45,43 +45,43 @@ class BoundaryBox:
         else:
             raise ValueError("halo must be an int or a tuple of two ints.")
 
-        if not (self.j_end > self.j_start and self.i_end > self.i_start):
+        if not (self.j1 > self.j0 and self.i1 > self.i0):
             raise ValueError("End indices must be greater than start indices.")
+
+    def __repr__(self):
+        return (
+            f"BoundaryBox("
+            f"j0={self.j0}, j1={self.j1}, i0={self.i0}, i1={self.i1}, halo={self.halo}, "
+            f"position={self.position}"
+            f")"
+        )
+
+    def __str__(self):
+        # alias
+        gj0, gj1 = self.jdg_slice.start, self.jdg_slice.stop
+        gi0, gi1 = self.idg_slice.start, self.idg_slice.stop
+
+        # Position (tile indices); (-1, -1) means global box
+        pos = "global" if self.position == GLOBAL_POS else f"{self.position}"
+
+        # Construct lines
+        disp = [
+            str(type(self)),
+            f"  position = {pos}",
+            f"  global computer domain: ",
+            f"     (nj, ni) = ({self.nj}, {self.ni}), (j0, j1, i0, i1) = ({self.j0}, {self.j1}, {self.i0}, {self.i1})",
+            f"  global data domain: ",
+            f"     (nj, ni) = ({self.data_nj}, {self.data_ni}), (j0, j1, i0, i1) = ({gj0}, {gj1}, {gi0}, {gi1})"
+        ]
+        return '\n'.join(disp)
 
     @property
     def is_global(self) -> bool:
         return self.position is GLOBAL_POS
 
-    @property
-    def global_j_slice(self) -> slice:
-        """Full global j-slice including halo."""
-        return slice(self.j_start-self.halo[0], self.j_end+self.halo[0])
-
-    @property
-    def global_i_slice(self) -> slice:
-        """Full global i-slice including halo."""
-        return slice(self.i_start-self.halo[1], self.i_end+self.halo[0])
-
-    @property
-    def global_box(self) -> Tuple[slice, slice]:
-        """Full global box including halo."""
-        return (self.global_j_slice, self.global_i_slice)
-
-    @property
-    def global_compute_j_slice(self) -> slice:
-        """Full global j-slice excluding halo."""
-        return slice(self.j_start, self.j_end)
-
-    @property
-    def global_compute_i_slice(self) -> slice:
-        """Full global i-slice excluding halo."""
-        return slice(self.i_start, self.i_end)
-
-    @property
-    def global_compute_box(self) -> Tuple[slice, slice]:
-        """Full global box excluding halo."""
-        return (self.global_compute_j_slice, self.global_compute_i_slice)
-
+    # ============================================================
+    # Size and shape
+    # ============================================================
     @property
     def halo_j(self) -> int:
         return self.halo[0]
@@ -91,49 +91,179 @@ class BoundaryBox:
         return self.halo[1]
 
     @property
-    def compute_nj(self) -> int:
-        """nj of the compute region."""
-        return self.j_end - self.j_start
-
-    @property
-    def compute_ni(self) -> int:
-        """ni of the compute region."""
-        return self.i_end - self.i_start
-
-    @property
-    def compute_shape(self) -> int:
-        """Shape of the compute region."""
-        return ( self.compute_nj, self.compute_ni )
-
-    @property
     def nj(self) -> int:
-        """Data nj of the region."""
-        return self.compute_nj + 2 * self.halo_j
+        """nj of the computation region."""
+        return self.j1 - self.j0
 
     @property
     def ni(self) -> int:
-        """Data ni of the region."""
-        return self.compute_ni + 2 * self.halo_i
+        """ni of the computation region."""
+        return self.i1 - self.i0
 
     @property
-    def shape(self) -> Tuple[int, int]:
-        """Data shape of the region."""
+    def shape(self) -> int:
+        """Shape of the computation region."""
         return ( self.nj, self.ni )
 
     @property
-    def compute_j_slice(self) -> slice:
-        """Compute local j-slice (excludes halo)."""
-        return slice(self.halo_j, self.nj - self.halo_j)
+    def data_nj(self) -> int:
+        """nj of the data region."""
+        return self.nj + 2 * self.halo_j
 
     @property
-    def compute_i_slice(self) -> slice:
-        """Compute local i-slice (excludes halo)."""
-        return slice(self.halo_i, self.ni - self.halo_i)
+    def data_ni(self) -> int:
+        """ni of the data region."""
+        return self.ni + 2 * self.halo_i
 
     @property
-    def compute_box(self) -> Tuple[slice, slice]:
-        """Compute local box."""
-        return self.compute_j_slice, self.compute_i_slice
+    def data_shape(self) -> Tuple[int, int]:
+        """Shape of the data region."""
+        return ( self.data_nj, self.data_ni )
+
+    # ============================================================
+    # Global computation (excluding halo) domain
+    # ============================================================
+    @property
+    def jcg_slice(self) -> slice:
+        """Computation global j-slice."""
+        return slice(self.j0, self.j1)
+
+    @property
+    def icg_slice(self) -> slice:
+        """Computation global i-slice."""
+        return slice(self.i0, self.i1)
+
+    @property
+    def J0cg(self) -> int:
+        """Computation global western edge."""
+        return self.j0
+
+    @property
+    def J1cg(self) -> int:
+        """Computation global eastern edge."""
+        return self.j1
+
+    @property
+    def I0cg(self) -> int:
+        """Computation global southern edge."""
+        return self.i0
+
+    @property
+    def I1cg(self) -> int:
+        """Computation global northern edge."""
+        return self.i1
+
+    @property
+    def Jcg_inner_slice(self) -> slice:
+        """Computation global J-slice for inner edges."""
+        return slice(self.j0 + 1, self.j1)
+
+    @property
+    def Icg_inner_slice(self) -> slice:
+        """Computation global I-slice for inner edges."""
+        return slice(self.i0 + 1, self.i1)
+
+    @property
+    def Jcg_outer_slice(self) -> slice:
+        """Computation global j-slice for outer edges."""
+        return slice(self.j0, self.j1 + 1)
+
+    @property
+    def Icg_outer_slice(self) -> slice:
+        """Computation global i-slice for outer edges."""
+        return slice(self.i0, self.i1 + 1)
+
+    # ============================================================
+    # Global data (including halo) domain
+    # ============================================================
+    @property
+    def jdg_slice(self) -> slice:
+        """Data global j-slice."""
+        return slice(self.j0 - self.halo_j, self.j1 + self.halo_j)
+
+    @property
+    def idg_slice(self) -> slice:
+        """Data global i-slice."""
+        return slice(self.i0 - self.halo_i, self.i1 + self.halo_i)
+
+    # ============================================================
+    # Local computation (excluding halo) domain
+    # ============================================================
+    @property
+    def jcl_slice(self) -> slice:
+        """Computation local j-slice."""
+        return slice(self.halo_j, self.data_nj - self.halo_j)
+
+    @property
+    def icl_slice(self) -> slice:
+        """Computation local i-slice."""
+        return slice(self.halo_i, self.data_ni - self.halo_i)
+
+    @property
+    def J0cl(self) -> int:
+        """Computation local western edge."""
+        return self.halo_j
+
+    @property
+    def J1cl(self) -> int:
+        """Computation local eastern edge."""
+        return self.data_nj - self.halo_j + 1
+
+    @property
+    def I0cl(self) -> int:
+        """Computation local southern edge."""
+        return self.halo_i
+
+    @property
+    def I1cl(self) -> int:
+        """Computation local northern edge."""
+        return self.data_ni - self.halo_i + 1
+
+    @property
+    def Jcl_inner_slice(self) -> slice:
+        """Computation local J-slice for inner edges."""
+        return slice(self.halo_j + 1, self.data_nj - self.halo_j)
+
+    @property
+    def Icl_inner_slice(self) -> slice:
+        """Computation local I-slice for inner edges."""
+        return slice(self.halo_i + 1, self.data_ni - self.halo_i)
+
+    @property
+    def Jcl_outer_slice(self) -> slice:
+        """Computation local J-slice for outer edges."""
+        return slice(self.halo_j, self.data_nj - self.halo_j + 1)
+
+    @property
+    def Icl_outer_slice(self) -> slice:
+        """Computation local I-slice for outer edges."""
+        return slice(self.halo_i, self.data_ni - self.halo_i + 1)
+
+    # ============================================================
+    # Local data (including halo) domain
+    # ============================================================
+    @property
+    def jdl_slice(self) -> slice:
+        """Data local j-slice."""
+        return slice(0, self.data_nj)
+
+    @property
+    def idl_slice(self) -> slice:
+        """Data local i-slice."""
+        return slice(0, self.data_ni)
+
+def reverse_slice(s: slice) -> slice:
+    start, stop = s.start, s.stop
+    step = s.step or 1
+
+    if step <= 0:
+        raise ValueError("reverse_slice only supports positive-step slices")
+
+    # For a forward slice(start, stop), Python includes start and excludes stop.
+    # The reversed slice needs:
+    #   new_start = stop - 1
+    #   new_stop  = start - 1
+    return slice(stop - 1, start - 1, -step)
 
 def slice_array(arr, bbox, position='corner', fold_north=True, cyclic_zonal=True, fold_south=False):
     """Slice a 2D field with extend indices that cover halos
@@ -170,7 +300,7 @@ def slice_array(arr, bbox, position='corner', fold_north=True, cyclic_zonal=True
     """
     Nj, Ni = arr.shape
     # jst, jed, ist, ied = box
-    jst, jed, ist, ied = bbox.global_j_slice.start, bbox.global_j_slice.stop, bbox.global_i_slice.start, bbox.global_i_slice.stop
+    jst, jed, ist, ied = bbox.jdg_slice.start, bbox.jdg_slice.stop, bbox.idg_slice.start, bbox.idg_slice.stop
 
     # Additional points for staggered locations (symmetric)
     if position == 'center':
