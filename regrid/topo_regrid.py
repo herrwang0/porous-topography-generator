@@ -91,7 +91,7 @@ class NorthPoleMask:
         if jj.size==0 or ii.size==0 or self.counts==0:
             recs = []
         elif self.counts==1:
-            recs = [(jj.min(), jj.max(), ii.min(), ii.max())]
+            recs = BoundaryBox( j0=jj.min(), j1=jj.max(), i0=ii.min(), i1=ii.max() )
         elif self.counts==2:
             jjw = jj[ii<domain.ni//2]; iiw = ii[ii<domain.ni//2]
             jje = jj[ii>domain.ni//2]; iie = ii[ii>domain.ni//2]
@@ -100,20 +100,23 @@ class NorthPoleMask:
             assert (jjw.max()==domain.nj), 'mask domains do not reach the north boundary.'
             assert (iiw.min()+iie.max()==domain.ni) and ((iiw.max()+iie.min()==domain.ni)), \
                 'ni in the two mask domains mismatch.'
-            recs = [(jj.min(), jj.max(), iiw.min(), iiw.max()),
-                    (jj.min(), jj.max(), iie.min(), iie.max())]
+            recs = [
+                  BoundaryBox( j0=jj.min(), j1=jj.max(), i0=iiw.min(), i1=iiw.max() ),
+                  BoundaryBox( j0=jj.min(), j1=jj.max(), i0=iie.min(), i1=iie.max() )
+            ]
             # self.masks = [(jj.min(), 2*domain.nj-jj.min(), iiw.min(), iiw.max()),
             #                    (jj.min(), 2*domain.nj-jj.min(), iie.min(), iie.max())] # extend passing the northern boundary for halos
         else:
             raise Exception('Currently only two north pole rectangles are supported.')
         return recs
 
-    def find_local_masks(self, box, halo):
+    def find_local_masks(self, bbox):
         """Finds where the north pole rectangles overlap with the subdomain"""
         masks = []
-        jst, jed, ist, ied = box
-        jsth, jedh, isth, iedh = jst-halo, jed+halo, ist-halo, ied+halo
-        for jstm, jedm, istm, iedm in self:
+        jst, jed, ist, ied = bbox.jcg_slice.start, bbox.jcg_slice.stop, bbox.icg_slice.start, bbox.icg_slice.stop
+        jsth, jedh, isth, iedh = bbox.jdg_slice.start, bbox.jdg_slice.stop, bbox.idg_slice.start, bbox.idg_slice.stop
+        for mask_bbox in self:
+            jstm, jedm, istm, iedm = mask_bbox.jcg_slice.start, mask_bbox.jcg_slice.stop, mask_bbox.icg_slice.start, mask_bbox.icg_slice.stop
             if (not ((istm>=iedh) or iedm<=isth)) and (not ((jstm>=jedh) or (jedm<=jsth))):
                 # Relative indices
                 j0, j1, i0, i1 = max(jstm,jsth)-jsth, min(jedm,jedh)-jsth, max(istm,isth)-isth, min(iedm,iedh)-isth
@@ -130,7 +133,7 @@ class NorthPoleMask:
                 # # The following addresses a very trivial case when the mask reaches
                 # # the southern bounndary, which may only happen in tests.
                 # if jstm==0 and jst<0: j0 = 0
-                masks.append((j0, j1, i0, i1))
+                masks.append( BoundaryBox(j0, j1, i0, i1) )
         return masks
 
     def create_mask_domain(self, tgt_halo=0, norm_lon=True, pole_radius=0.25):
@@ -395,6 +398,8 @@ class Domain(ThinWalls.ThinWalls):
                 if config.calc_gradient: self.gradient[jg_slice, ig_slice] = tiles[iy,ix].gradient[jl_slice, il_slice]
 
     def _stitch_i(self, tile_l, tile_r, tolerance, calc_effective=False, verbose=False):
+        """Stitch edges properties in-between tiles along i
+        """
         jg_slice, I1g, I0g = tile_l.bbox.jcg_slice, tile_l.bbox.I1cg, tile_r.bbox.I0cg
         jl_slice, I1l, I0l = tile_l.bbox.jcl_slice, tile_l.bbox.I1cl, tile_r.bbox.I0cl
         if I1g != I0g: raise ValueError(f"Left tile and right tile edges do not match {I1g}!={I0g}.")
@@ -411,6 +416,8 @@ class Domain(ThinWalls.ThinWalls):
                 tolerance=tolerance, verbose=verbose, message=edgeloc+' (effective)')
 
     def _stitch_j(self, tile_d, tile_u, tolerance, calc_effective=False, verbose=False):
+        """Stitch edges properties in-between tiles along j
+        """
         ig_slice, J1g, J0g = tile_d.bbox.icg_slice, tile_d.bbox.J1cg, tile_u.bbox.J0cg
         il_slice, J1l, J0l = tile_d.bbox.icl_slice, tile_d.bbox.J1cl, tile_u.bbox.J0cl
         if J1g != J0g: raise ValueError(f"Down tile and up tile edges do not match {J1g}!={J0g}.")
@@ -427,6 +434,8 @@ class Domain(ThinWalls.ThinWalls):
                 tolerance=tolerance, verbose=verbose, message=edgeloc+' (effective)')
 
     def _stitch_edges(self, tiles, calc_effective, tolerance):
+        """A wrapper of _stitch_[ij]
+        """
         npj, npi = tiles.shape
 
         for iy in range(npj):
@@ -437,11 +446,15 @@ class Domain(ThinWalls.ThinWalls):
                 self._stitch_j( tiles[iy, ix], tiles[iy+1, ix], tolerance, calc_effective=calc_effective )
 
     def _stitch_reentrant_x(self, tiles, tolerance, calc_effective=False):
+        """Stitch cyclic zonal edges
+        """
         npj, _ = tiles.shape
         for iy in range(npj):
             self._stitch_i( tiles[iy, -1], tiles[iy, 0], tolerance, calc_effective=calc_effective )
 
     def _stitch_fold_n(self, tiles, tolerance, calc_effective=False, verbose=False):
+        """Stitch the folding north edge
+        """
         _, npi = tiles.shape
         for ix in range(npi//2):
             tile_d, tile_u = tiles[-1,ix], tiles[-1,npi-ix-1]
