@@ -3,8 +3,9 @@ import argparse
 import numpy
 import netCDF4
 from .external.thinwall.python import GMesh
-from .output_utils import write_output, write_hitmap, TimeLog, CalcConfig, RefineConfig
-from .topo_regrid import Domain, HitMap, topo_gen_mp, topo_gen, NorthPoleMask
+from .kernel import HitMap, TimeLog, CalcConfig, RefineConfig, topo_gen_mp, topo_gen
+from .output_utils import write_output, write_hitmap
+from .topo_regrid import Domain, NorthPoleMask
 
 def main():
     parser = argparse.ArgumentParser(description='Objective topography regridding',
@@ -180,7 +181,7 @@ def main():
         twlist, hitlist = zip(*twlist)
         hm.stitch_hits(hitlist)
 
-    dm.stitch_subdomains(twlist, tolerance=bnd_tol_level, config=calc_config, verbose=args.verbose)
+    dm.stitch_subdomains([tw['tw'] for tw in twlist], tolerance=bnd_tol_level, config=calc_config, verbose=args.verbose)
 
     clock.delta('Regrid main')
     if args.fixed_refine_level<0:

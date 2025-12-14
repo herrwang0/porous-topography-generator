@@ -1,13 +1,10 @@
 import sys
 import numpy
-import multiprocessing
-import functools
 
 from .external.thinwall.python import GMesh
 from .external.thinwall.python import ThinWalls
-from .roughness import subgrid_roughness_gradient
 from .tile_utils import slice_array, decompose_domain, normlize_longitude, box_halo, BoundaryBox, reverse_slice
-from .output_utils import TimeLog, CalcConfig, RefineConfig
+from .kernel import CalcConfig
 # from .north_pole import NorthPoleMask
 
 class HitMap(GMesh.GMesh):
@@ -279,7 +276,6 @@ class Domain(ThinWalls.ThinWalls):
             Source coordinates and topography
         src_halo : integer, optional
             Halo size of the source grid in either direction.
-        refine_config : RefineConfig, optional
         verbose : bool, optional
 
         Returns
@@ -315,7 +311,7 @@ class Domain(ThinWalls.ThinWalls):
                 lat = slice_array(self.lat, bbox=bbox, cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
                 if norm_lon: lon = normlize_longitude(lon, lat)
 
-                masks = self.north_mask.find_local_masks((jst, jed, ist, ied), tgt_halo)
+                masks = self.north_mask.find_local_masks(bbox)
                 if self.Idx is None: Idx = None
                 else: Idx = slice_array(self.Idx, bbox=bbox, position='center', cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
                 if self.Idy is None: Idy = None
@@ -730,115 +726,3 @@ def match_edges(edge1, edge2, rfl1, rfl2, tolerance=0, verbose=True, message='')
         if numpy.any(rfl1!=rfl2) and verbose: # This should hardly happen.
             print(message+' have the same edge but different refinement levels '+str_rfls+'.')
         return edge1
-
-def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), tw_interp='max', save_hits=True, verbose=True, timers=False):
-    """The main function for generating topography
-
-    Parameters
-    ----------
-    grid : RefineWrapper object
-        Contains all setting parameters needed for GMesh.refine_loop()
-
-    Returns
-    ----------
-    tw : ThinWalls.ThinWalls object
-    """
-
-    if timers: clock = TimeLog(['setup topo_gen', 'refine grid', 'assign data', 'init thinwalls', 'roughness/gradient', 'total',
-                                'refine loop (total)', 'refine loop (effective thinwalls)', 'refine loop (coarsen grid)'])
-    if verbose:
-        print('topo_gen() for domain {:}'.format(grid.bbox.position))
-
-    if (not refine_config.use_center) and (config.calc_roughness or config.calc_gradient):
-        raise Exception('"use_center" needs to be used for roughness or gradient')
-    if timers: clock.delta('setup topo_gen')
-
-    # Step 1: Refine grid
-    levels = grid.refine_loop(grid.eds, verbose=True, timers=False, **refine_config.to_kwargs())
-    nrfl = levels[-1].rfl
-    if timers: clock.delta('refine grid')
-
-    # Step 2: Project elevation to the finest grid
-    levels[-1].project_source_data_onto_target_mesh(
-        grid.eds, use_center=refine_config.use_center, work_in_3d=refine_config.work_in_3d
-    )
-    if save_hits:
-        lon_src, lat_src = grid.eds.lon_coord, grid.eds.lat_coord
-        hits = HitMap(shape=(lat_src.size, lon_src.size))
-        hits[:] = levels[-1].source_hits(grid.eds, use_center=refine_config.use_center, singularity_radius=0.0)
-        hits.box = (lat_src.start, lat_src.stop, lon_src.start, lon_src.stop)
-    if timers: clock.delta('assign data')
-
-    # Step 2: Create a ThinWalls object on the finest grid and coarsen back
-    tw = ThinWalls.ThinWalls(lon=levels[-1].lon, lat=levels[-1].lat, rfl=levels[-1].rfl)
-    if refine_config.use_center:
-        tw.set_cell_mean(levels[-1].height)
-        if config.calc_thinwalls:
-            tw.set_edge_to_step(tw_interp)
-    else:
-        tw.set_center_from_corner(levels[-1].height)
-        if config.calc_thinwalls:
-            tw.set_edge_from_corner(levels[-1].height)
-    if config.calc_effective_tw:
-        tw.init_effective_values()
-    if timers: clock.delta('init thinwalls')
-    if verbose: print('Refine level {:} {:}'.format(tw.rfl, tw))
-
-    if timers: loop_start = clock.now
-    for _ in range(nrfl):
-        if timers: clock.update_prev()
-        if config.calc_effective_tw:
-            # # old methods
-            # patho_ew = tw.diagnose_EW_pathway()
-            # patho_ns = tw.diagnose_NS_pathway()
-            # patho_sw, patho_se, patho_ne, patho_nw = tw.diagnose_corner_pathways()
-            # tw.push_corners(verbose=False)
-            # tw.lower_tallest_buttress(verbose=False)
-            # # tw.fold_out_central_ridges(er=True, verbose=False)
-            # tw.fold_out_central_ridges(verbose=False)
-            # tw.invert_exterior_corners(verbose=False)
-            # tw.limit_NS_EW_connections(patho_ns, patho_ew, verbose=False)
-            # tw.limit_corner_connections(patho_sw, patho_se, patho_ne, patho_nw, verbose=False)
-
-            # new methods
-            pathn_s = tw.diagnose_pathways_straight()
-            pathn_c = tw.diagnose_pathways_corner()
-            tw.push_interior_corners(adjust_centers=True, verbose=False)
-            tw.lower_interior_buttresses(do_ave=True, adjust_mean=False, verbose=False)
-            tw.fold_interior_ridges(adjust_centers=True, adjust_low_only=True, verbose=False)
-            tw.expand_interior_corners(adjust_centers=True, verbose=False)
-            tw.limit_connections(connections=pathn_s, verbose=False)
-            tw.limit_connections(connections=pathn_c, verbose=False)
-            tw.lift_ave_max()
-        if timers: clock.delta('refine loop (effective thinwalls)')
-        tw = tw.coarsen(do_thinwalls=config.calc_thinwalls, do_effective=config.calc_effective_tw)
-        if verbose: print('Refine level {:} {:}'.format(tw.rfl, tw))
-        if timers: clock.delta('refine loop (coarsen grid)')
-    if timers: clock.delta('refine loop (total)', ref_time=loop_start)
-
-    out = subgrid_roughness_gradient(
-        levels, tw.c_simple.ave, do_roughness=config.calc_roughness, do_gradient=config.calc_gradient, Idx=grid.Idx, Idy=grid.Idy)
-    tw.roughness, tw.gradient = out['h2'], out['gh']
-    if timers: clock.delta("roughness/gradient")
-
-    # Step 3: Decorate the coarsened ThinWalls object
-    tw.bbox = grid.bbox
-    tw.mrfl = nrfl
-
-    if timers:
-        clock.delta('total')
-        clock.print()
-
-    if save_hits: return tw, hits
-    else: return tw
-
-def topo_gen_mp(domain_list, nprocs=None, refine_config=RefineConfig(), save_hits=False, verbose=False, timers=False, tw_interp='max'):
-    """A wrapper for multiprocessing topo_gen"""
-    if nprocs is None:
-        nprocs = len(domain_list)
-    pool = multiprocessing.Pool(processes=nprocs)
-    tw_list = pool.map(functools.partial(topo_gen, save_hits=save_hits, verbose=verbose, timers=timers, tw_interp=tw_interp, refine_config=refine_config), domain_list)
-    pool.close()
-    pool.join()
-
-    return tw_list

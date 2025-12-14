@@ -6,62 +6,7 @@ Pure helper functions for creating files and timers
 
 import numpy
 import netCDF4
-import time
-from dataclasses import dataclass, asdict
-
-@dataclass
-class RefineConfig:
-    use_center : bool = True
-    resolution_limit : bool = False
-    fixed_refine_level : int = -1
-    work_in_3d : bool = False
-    singularity_radius : float = 0.25
-    max_mb : float = 32000
-    max_stages : int = 32
-
-    def to_kwargs(self):
-        return asdict(self)
-
-@dataclass
-class CalcConfig:
-    calc_mean_only: bool = False
-    _thinwalls: bool = True
-    _effective_tw: bool = False
-    calc_roughness: bool = False
-    calc_gradient: bool = False
-
-    @property
-    def calc_thinwalls(self):
-        return self._thinwalls and (not self.calc_mean_only)
-    @property
-    def calc_effective_tw(self):
-        return self.calc_thinwalls and self._effective_tw
-
-class TimeLog(object):
-    """An object logging times"""
-    def __init__(self, keys):
-        self.processes = dict()
-        for key in keys:
-            self.processes[key] = 0.0
-        self.update_prev()
-    def update_prev(self):
-        """Set current time as a reference previous time"""
-        self.ref_time = self.now
-    @property
-    def now(self):
-        """"Current time"""
-        return time.time_ns()
-    def delta(self, key, ref_time=None):
-        """Accumulates time elapsed since reference time in processes[key]"""
-        if ref_time is None: ref_time = self.ref_time
-        dt = self.now - ref_time
-        self.update_prev()
-        self.processes[key] += dt
-    def print(self):
-        for label, dt in self.processes.items():
-            dt //= 1000000
-            if dt<9000: print( '{:>10}ms : {}'.format( dt, label) )
-            else: print( '{:>10}secs : {}'.format( dt / 1000, label) )
+from .kernel import CalcConfig
 
 def write_output(domain, filename, config=CalcConfig(), output_refine=True,
                  format='NETCDF3_64BIT_OFFSET', history='', description=None,
