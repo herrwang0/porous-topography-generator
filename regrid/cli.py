@@ -123,7 +123,7 @@ def main():
 
     # Calculation options
     calc_config = CalcConfig(
-        calc_mean_only=args.mean_only, _thinwalls=args.do_thinwalls, _effective_tw=args.do_thinwalls_effective,
+        calc_cell_stats=(not args.mean_only), _thinwalls=args.do_thinwalls, _effective_tw=args.do_thinwalls_effective,
         calc_roughness=args.do_roughness, calc_gradient=args.do_gradient
     )
 
@@ -141,9 +141,7 @@ def main():
     )
 
     if args.verbose:
-        print('fixed_refine_level: ', refine_config.fixed_refine_level)
-        print('use_resolution_limit: ', refine_config.resolution_limit)
-        print('refine_in_3d: ', refine_config.work_in_3d)
+        refine_config.print_options()
         print('north_pole_lat: ', north_pole_lat)
         print('np_lat_end: ', np_lat_end)
         print('np_lat_step: ', np_lat_step)

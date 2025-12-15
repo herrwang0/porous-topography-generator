@@ -7,43 +7,6 @@ from .tile_utils import slice_array, decompose_domain, normlize_longitude, box_h
 from .kernel import CalcConfig
 # from .north_pole import NorthPoleMask
 
-class HitMap(GMesh.GMesh):
-    """A container for hits on the source grid
-    """
-    def __init__(self, *args, **kwargs):
-        """"""
-        super().__init__(*args, **kwargs)
-        self._hits = numpy.zeros( self.shape )
-        self._box = (0, self.shape[0], 0, self.shape[1])
-    def __getitem__(self, key):
-        return self._hits[key]
-    def __setitem__(self, key, value):
-        self._hits[key] = value
-    @property
-    def box(self):
-        return self._box
-    @box.setter
-    def box(self, value):
-        assert isinstance(value, tuple) and len(value)==4, "Box needs to be a 4-element tuple."
-        # jst, jed, ist, ied = value
-        # assert (jed-jst, ied-ist)==self.shape or , "Wrong box size."
-        self._box = value
-    def stitch_hits(self, hits_list):
-        """Puts together hits from a list of subdomains"""
-        for hits in hits_list:
-            jst, jed, ist, ied = hits.box
-            if ist<ied:
-                self[jst:jed, ist:ied] += hits[:]
-            else:
-                self[jst:jed, :ied] += hits[:,-ied:]
-                self[jst:jed, ist:] += hits[:,:-ied]
-    def check_lat(self):
-        """Checks if all points at each latitude are hit."""
-        return numpy.all(self[:,:], axis=1)
-    def pcolormesh(self, axis, **kwargs):
-        """Plots hit map"""
-        return axis.pcolormesh( self.lon, self.lat, self[:,:], **kwargs )
-
 class NorthPoleMask:
     def __init__(self, domain, counts=0, radius=0.25):
         """

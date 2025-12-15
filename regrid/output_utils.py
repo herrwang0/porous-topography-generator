@@ -44,7 +44,7 @@ def write_output(domain, filename, config=CalcConfig(), output_refine=True,
     varout = ncout.createVariable('nx', numpy.float64, ('nx',)); varout.cartesian_axis = 'X'
     varout = ncout.createVariable('ny', numpy.float64, ('ny',)); varout.cartesian_axis = 'Y'
 
-    if config.calc_mean_only:
+    if not config.calc_cell_stats:
         description = "Mean topography at cell-centers" if description is None else description
         write_variable(
             ncout, signed(domain.c_simple.ave), 'depth', 'c', long_name='Cell-center mean topography')

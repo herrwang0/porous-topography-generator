@@ -1,6 +1,6 @@
 import numpy
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields
 from .external.thinwall.python import GMesh
 from .external.thinwall.python import ThinWalls
 from .roughness import subgrid_roughness_gradient
@@ -10,6 +10,7 @@ import functools
 
 @dataclass
 class RefineConfig:
+    """A container for GMesh.GMesh.refine() options"""
     use_center : bool = True
     resolution_limit : bool = False
     fixed_refine_level : int = -1
@@ -21,9 +22,17 @@ class RefineConfig:
     def to_kwargs(self):
         return asdict(self)
 
+    def print_options(self):
+        options = asdict(self)
+        max_len = max(len(key) for key in options.keys())
+        print("RefineConfig Options:")
+        for key, value in options.items():
+            print(f"  {key.ljust(max_len)} : {value}")
+
 @dataclass
 class CalcConfig:
-    calc_mean_only: bool = False
+    """A container for regridding options"""
+    calc_cell_stats: bool = True
     _thinwalls: bool = True
     _effective_tw: bool = False
     calc_roughness: bool = False
@@ -31,10 +40,24 @@ class CalcConfig:
 
     @property
     def calc_thinwalls(self):
-        return self._thinwalls and (not self.calc_mean_only)
+        return self._thinwalls and self.calc_cell_stats
     @property
     def calc_effective_tw(self):
         return self.calc_thinwalls and self._effective_tw
+
+    def print_options(self):
+        # Public dataclass fields
+        public_fields = {f.name: getattr(self, f.name)
+                         for f in fields(self) if not f.name.startswith("_")}
+        # Properties
+        properties = ['calc_thinwalls', 'calc_effective_tw']
+        for prop in properties:
+            public_fields[prop] = getattr(self, prop)
+
+        max_len = max(len(k) for k in public_fields.keys())
+        print("CalcConfig Options:")
+        for key, value in public_fields.items():
+            print(f"  {key.ljust(max_len)} : {value}")
 
 class TimeLog(object):
     """An object logging times"""
