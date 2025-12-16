@@ -8,12 +8,21 @@ from .output_utils import write_output, write_hitmap
 from .topo_regrid import Domain, NorthPoleMask
 
 def main():
-    parser = argparse.ArgumentParser(description='Objective topography regridding',
-                                     formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument("-v", "--verbose", action='store_true')
-    parser.add_argument("--verbosity", default=0, help='Granularity of log output')
+    parser = argparse.ArgumentParser(prog="ptopo")
+    subparsers = parser.add_subparsers(dest="command")
 
-    parser_tgt = parser.add_argument_group('Target grid')
+    p_regrid = subparsers.add_parser(
+        "regrid", description='Objective topography regridding', formatter_class=argparse.RawTextHelpFormatter
+    )
+    p_regrid.set_defaults(func=regrid)
+
+    # parser = argparse.ArgumentParser(
+    #     description='Objective topography regridding', formatter_class=argparse.RawTextHelpFormatter
+    # )
+    p_regrid.add_argument("-v", "--verbose", action='store_true')
+    p_regrid.add_argument("--verbosity", default=0, help='Granularity of log output')
+
+    parser_tgt = p_regrid.add_argument_group('Target grid')
     parser_tgt.add_argument("--target_grid", default='', help='File name of the target grid')
     parser_tgt.add_argument("--lon_tgt", default='x', help='Field name in target grid file for longitude')
     parser_tgt.add_argument("--lat_tgt", default='y', help='Field name in target grid file for latitude')
@@ -24,7 +33,7 @@ def main():
     parser_tgt.add_argument("--tgt_halo", default=0, type=int, help='Halo size at both directions for target grid subdomain')
     parser_tgt.add_argument("--tgt_regional", action='store_true', help='If true, target grid is regional rather than global.')
 
-    parser_src = parser.add_argument_group('Source data')
+    parser_src = p_regrid.add_argument_group('Source data')
     parser_src.add_argument("--source", default='', help='File name of the source data')
     parser_src.add_argument("--coord_source", default='', help='File name of the source coordinate (can be different from source)')
     parser_src.add_argument("--lon_src", default='lon', help='Field name in source file for longitude')
@@ -35,7 +44,7 @@ def main():
                             help=('If specified, the repeating longitude in the last column is removed. '
                                   'Elevation along that longitude will be the mean.'))
 
-    parser_cc = parser.add_argument_group('Calculation options')
+    parser_cc = p_regrid.add_argument_group('Calculation options')
     parser_cc.add_argument("--mean-only", action='store_true', help='Output cell-mean topography only')
     parser_cc.add_argument("--do_thinwalls", action='store_true', help='Calculate thin wall parameters')
     parser_cc.add_argument("--thinwalls_interp", default='max', help='Interpolation method for getting thin walls.')
@@ -44,14 +53,14 @@ def main():
     parser_cc.add_argument("--do_gradient", action='store_true', help='Calculate sub-grid gradient')
     parser_cc.add_argument("--save_hits", action='store_true', help='Save hitmap to a file')
 
-    parser_pe = parser.add_argument_group('Parallelism options')
+    parser_pe = p_regrid.add_argument_group('Parallelism options')
     parser_pe.add_argument("--nprocs", default=0, type=int, help='Number of processors used in parallel')
     parser_pe.add_argument("--pe", nargs='+', type=int, help='Domain decomposition layout')
     parser_pe.add_argument("--pe_p", nargs='+', type=int, help='Domain decomposition layout for the North Pole rectangles')
     parser_pe.add_argument("--max_mb", default=10240, type=float, help='Memory limit per processor')
     parser_pe.add_argument("--bnd_tol_level", default=2, type=int, help='Shared boundary treatment strategy')
 
-    parser_rgd = parser.add_argument_group('Regrid options')
+    parser_rgd = p_regrid.add_argument_group('Regrid options')
     parser_rgd.add_argument("--use_corner", action='store_true', help='Use cell corners for nearest neighbor.')
     parser_rgd.add_argument("--fixed_refine_level", default=-1, type=int, help='Force refinement to a specific level.')
     parser_rgd.add_argument("--refine_in_3d", action='store_true', help='If specified, use great circle for grid interpolation.')
@@ -61,12 +70,20 @@ def main():
     parser_rgd.add_argument("--pole_step", default=0.5, type=float, help='Pole steps')
     parser_rgd.add_argument("--pole_end", default=89.75, type=float, help='North Pole step lat')
 
-    parser_out = parser.add_argument_group('Output options')
+    parser_out = p_regrid.add_argument_group('Output options')
     parser_out.add_argument("--output", default='')
 
-    # args = parser.parse_args(argv[1:])
-    args = parser.parse_args()
 
+    # args = parser.parse_args(argv[1:])
+    # parse and call the function
+    args = parser.parse_args()
+    if args.command:
+        args.cmdline = " ".join(sys.argv)
+        args.func(args)
+    else:
+        parser.print_help()
+
+def regrid(args):
     clock = TimeLog(['Read source', 'Read target', 'Setup', 'Regrid main', 'Regrid masked', 'Write output'])
     # Read source data
     print('Reading source data from ', args.source)
