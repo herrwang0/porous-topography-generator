@@ -104,23 +104,36 @@ def mask_uv(wet, reentrant_x=True, fold_n=True, to_mask=False, to_float=False):
     if to_float: wetu, wetv = np.double(wetu), np.double(wetv)
     return wetu, wetv
 
-def main(argv):
-    parser = argparse.ArgumentParser(description='Flood and mask topography',
-                                     formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument("--file-in", default='', help='topo file')
-    parser.add_argument("--file-out", default=None, help='output file')
-    parser.add_argument("--var-in", default='depth')
-    parser.add_argument("--var-out", default=None)
-    parser.add_argument("--starting-point", nargs=2, type=int, default=None, help='Staring point (J,I)')
-    parser.add_argument("--flood-depth", default=0.0, type=float, help='elevation (positive above sea level) cutoff')
-    parser.add_argument("--mask-value", default=None, type=float, help='depth at dry points')
-    parser.add_argument("--do-subgrid", action='store_true', help='mask subgrid topography')
-    parser.add_argument("--subgrid-c-var", action="extend", nargs="+", type=str, default=[])
-    parser.add_argument("--subgrid-u-var", action="extend", nargs="+", type=str, default=[])
-    parser.add_argument("--subgrid-v-var", action="extend", nargs="+", type=str, default=[])
-    parser.add_argument("-q", "--quiet", action='store_true')
-    args = parser.parse_args(argv[1:])
+def add_ice9_parser(subparsers):
+    parser = subparsers.add_parser(
+        "ice9",
+        help="Flood and mask topography",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
 
+    parser.add_argument("--file-in", required=True, help="topo file")
+    parser.add_argument("--file-out", default=None, help="output file")
+    parser.add_argument("--var-in", default="depth")
+    parser.add_argument("--var-out", default=None)
+    parser.add_argument("--starting-point", nargs=2, type=int, default=None,
+                        help="Starting point (J I)")
+    parser.add_argument("--flood-depth", default=0.0, type=float,
+                        help="Elevation cutoff (positive above sea level)")
+    parser.add_argument("--mask-value", default=None, type=float,
+                        help="Depth at dry points")
+    parser.add_argument("--do-subgrid", action="store_true",
+                        help="Mask subgrid topography")
+    parser.add_argument("--subgrid-c-var", action="extend", nargs="+", default=[])
+    parser.add_argument("--subgrid-u-var", action="extend", nargs="+", default=[])
+    parser.add_argument("--subgrid-v-var", action="extend", nargs="+", default=[])
+    parser.add_argument("-q", "--quiet", action="store_true")
+
+    # crucial: attach handler
+    parser.set_defaults(func=run_ice9)
+
+    return parser
+
+def run_ice9(args):
     verbose = not args.quiet
 
     if args.var_out is None:
@@ -230,12 +243,9 @@ def main(argv):
     else:
         copy_var(ncsrc, ncout, var_out, depth)
 
-    ncout.history = ' '.join(argv)
+    ncout.history = args.cmdline
     ncout.close()
     ncsrc.close()
 
     if verbose:
         print('Done ice9')
-
-if __name__ == "__main__":
-    main(sys.argv)

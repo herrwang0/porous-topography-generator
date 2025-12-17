@@ -6,6 +6,7 @@ from .external.thinwall.python import GMesh
 from .kernel import HitMap, TimeLog, CalcConfig, RefineConfig, topo_gen_mp, topo_gen
 from .output_utils import write_output, write_hitmap
 from .topo_regrid import Domain, NorthPoleMask
+from .ice9 import add_ice9_parser
 
 def main():
     parser = argparse.ArgumentParser(prog="ptopo")
@@ -73,6 +74,7 @@ def main():
     parser_out = p_regrid.add_argument_group('Output options')
     parser_out.add_argument("--output", default='')
 
+    add_ice9_parser(subparsers)
 
     # args = parser.parse_args(argv[1:])
     # parse and call the function
