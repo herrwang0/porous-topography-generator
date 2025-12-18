@@ -1,4 +1,3 @@
-import sys
 import argparse
 import numpy as np
 import netCDF4
@@ -136,25 +135,19 @@ def add_ice9_parser(subparsers):
 def run_ice9(args):
     verbose = not args.quiet
 
-    if args.var_out is None:
-        var_out = args.var_in
-    else:
-        var_out = args.var_out
+    var_out = args.var_out or args.var_in
 
     if args.file_out is None:
         # mask_str = 'msk_{:0.0f}m'.format(-args.flood_depth).replace('-', 'm')
         if args.flood_depth<=0:
-            mask_str = 'msk_{:0.0f}m'.format(np.abs(args.flood_depth))
+            mask_str = f'msk_{np.abs(args.flood_depth):.0f}m'
         else:
-            mask_str = 'msk_m{:0.0f}m'.format(args.flood_depth)
+            mask_str = f'msk_m{args.flood_depth:.0f}m'
         file_out = Path(args.file_in).stem + '_' + mask_str + '.nc'
     else:
         file_out = args.file_out
 
-    if args.mask_value is None:
-        mask_value = -args.flood_depth
-    else:
-        mask_value = args.mask_value
+    mask_value = -args.flood_depth if args.mask_value is None else args.mask_value
 
     if verbose:
         print('Generate file ', file_out)
@@ -184,21 +177,21 @@ def run_ice9(args):
 
         for vname in args.subgrid_c_var:
             if vname not in ncsrc.variables:
-                print('  Warning: subgrid cell variable {:} not found in {:}, skip.'.format(vname, args.file_in))
+                print(f'  Warning: subgrid cell variable {vname} not found in {args.file_in}, skip.')
                 continue
             cvar[vname] = ncsrc[vname][:]
             cvar[vname][maskc] = mask_value
 
         for vname in args.subgrid_u_var:
             if vname not in ncsrc.variables:
-                print('  Warning: subgrid u variable {:} not found in {:}, skip.'.format(vname, args.file_in))
+                print(f'  Warning: subgrid u variable {vname} not found in {args.file_in}, skip.')
                 continue
             uvar[vname] = ncsrc[vname][:]
             uvar[vname][masku] = mask_value
 
         for vname in args.subgrid_v_var:
             if vname not in ncsrc.variables:
-                print('  Warning: subgrid v variable {:} not found in {:}, skip.'.format(vname, args.file_in))
+                print(f'  Warning: subgrid v variable {vname} not found in {args.file_in}, skip.')
                 continue
             vvar[vname] = ncsrc[vname][:]
             vvar[vname][maskv] = mask_value
@@ -214,7 +207,7 @@ def run_ice9(args):
         depth[maskc] = mask_value
 
     if verbose:
-        print('  New topography has {:} out of {:} wet points.'.format(ny*nx-maskc.sum(), ny*nx))
+        print(f"  New topography has {ny*nx-maskc.sum()} out of {ny*nx} wet points.")
 
     # write
     ncout = netCDF4.Dataset(file_out, 'w')
