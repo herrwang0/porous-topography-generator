@@ -12,8 +12,7 @@ license = { text = "MIT" }
 dependencies = []
 
 [project.scripts]
-ptopo = "regrid.cli:main"
+ptopo = "ptopo.cli.__main__:main"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["regrid*"]
+where = ["src"]

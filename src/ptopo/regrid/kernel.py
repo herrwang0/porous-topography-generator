@@ -1,8 +1,8 @@
 import numpy
 import time
 from dataclasses import dataclass, asdict, fields
-from .external.thinwall.python import GMesh
-from .external.thinwall.python import ThinWalls
+from ptopo.external.thinwall.python import GMesh
+from ptopo.external.thinwall.python import ThinWalls
 from .roughness import subgrid_roughness_gradient
 
 import multiprocessing

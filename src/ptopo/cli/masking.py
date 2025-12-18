@@ -2,7 +2,7 @@ import argparse
 import numpy as np
 import netCDF4
 from pathlib import Path
-from masking.ice9 import ice9it, copy_var, mask_uv
+from ptopo.masking.ice9 import ice9it, copy_var, mask_uv
 
 def add_masking_parser(subparsers):
     parser = subparsers.add_parser(
@@ -28,7 +28,6 @@ def add_masking_parser(subparsers):
     parser.add_argument("--subgrid-v-var", action="extend", nargs="+", default=[])
     parser.add_argument("-q", "--quiet", action="store_true")
 
-    # crucial: attach handler
     parser.set_defaults(func=run_masking)
 
     return parser

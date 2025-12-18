@@ -120,3 +120,84 @@ class NorthPoleMask:
 
             mds.append( Domain(lon=lon, lat=lat, Idx=Idx, Idy=Idy, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius) )
         return mds
+
+    def stitch_mask_domain(self, mask, rec, halo, config=CalcConfig(), tolerance=2, verbose=False):
+        """
+        The assumption is the masked domain has the higher refine level
+        """
+        for rec in self.masks:
+            jsg, jeg, isg, ieg = rec  # global indices
+            # Cell center sizes
+            nj, ni = jeg-jsg+2*halo, ieg-isg+2*halo
+            jst, jet, ist, iet = halo, nj-halo, halo, ni-halo  # tile indices
+
+            # aliasing
+            dCs, dUs, dVs = self.c_simple, self.u_simple, self.v_simple
+            mCs, mUs, mVs = mask.c_simple, mask.u_simple, mask.v_simple
+            dCr, dUr, dVr = self.c_rfl, self.u_rfl, self.v_rfl
+            mCr, mUr, mVr = mask.c_rfl, mask.u_rfl, mask.v_rfl
+            if config.calc_effective_tw:
+                dCe, dUe, dVe = self.c_effective, self.u_effective, self.v_effective
+                mCe, mUe, mVe = mask.c_effective, mask.u_effective, mask.v_effective
+
+            # assert numpy.all(dCr[jsg:jeg,isg:ieg]<=mCr[jst:jet,ist:iet]), \
+            #     'Mask refinement level lower than parent domain.'
+
+            # middle part
+            dCs[jsg:jeg,isg:ieg] = mCs[jst:jet,ist:iet]
+            dCr[jsg:jeg,isg:ieg] = mCr[jst:jet,ist:iet]
+
+            if config.calc_thinwalls:
+                dUs[jsg:jeg,isg+1:ieg] = mUs[jst:jet,ist+1:iet]
+                dUr[jsg:jeg,isg+1:ieg] = mUr[jst:jet,ist+1:iet]
+                dVs[jsg+1:jeg,isg:ieg] = mVs[jst+1:jet,ist:iet]
+                dVr[jsg+1:jeg,isg:ieg] = mVr[jst+1:jet,ist:iet]
+
+                msg = 'NP mask western edge (simple)'
+                dUs[jsg:jeg,isg] = match_edges(dUs[jsg:jeg,isg], mUs[jst:jet,ist],
+                                            dUr[jsg:jeg,isg], mUr[jst:jet,ist],
+                                            tolerance=tolerance, verbose=verbose, message=msg)
+                msg = 'NP mask eastern edge (simple)'
+                dUs[jsg:jeg,ieg] = match_edges(dUs[jsg:jeg,ieg], mUs[jst:jet,iet],
+                                            dUr[jsg:jeg,ieg], mUr[jst:jet,iet],
+                                            tolerance=tolerance, verbose=verbose, message=msg)
+                dUr[jsg:jeg,isg] = numpy.maximum(dUr[jsg:jeg,isg], mUr[jst:jet,ist])
+                dUr[jsg:jeg,ieg] = numpy.maximum(dUr[jsg:jeg,ieg], mUr[jst:jet,iet])
+
+                msg = 'NP mask northern edge (simple)'
+                dVs[jsg,isg:ieg] = match_edges(dVs[jsg,isg:ieg], mVs[jst,ist:iet],
+                                            dVr[jsg,isg:ieg], mVr[jst,ist:iet],
+                                            tolerance=tolerance, verbose=verbose, message=msg)
+                msg = 'NP mask southern edge (simple)'
+                dVs[jeg,isg:ieg] = match_edges(dVs[jeg,isg:ieg], mVs[jet,ist:iet],
+                                            dVr[jeg,isg:ieg], mVr[jet,ist:iet],
+                                            tolerance=tolerance, verbose=verbose, message=msg)
+                dVr[jsg,isg:ieg] = numpy.maximum(dVr[jsg,isg:ieg], mVr[jst,ist:iet])
+                dVr[jeg,isg:ieg] = numpy.maximum(dVr[jeg,isg:ieg], mVr[jet,ist:iet])
+
+                if config.calc_effective_tw:
+                    dCe[jsg:jeg,isg:ieg] = mCe[jst:jet,ist:iet]
+                    dUe[jsg:jeg,isg+1:ieg] = mUe[jst:jet,ist+1:iet]
+                    dVe[jsg+1:jeg,isg:ieg] = mVe[jst+1:jet,ist:iet]
+
+                    msg = 'NP mask W edge (effective)'
+                    dUe[jsg:jeg,isg] = match_edges(dUe[jsg:jeg,isg], mUe[jst:jet,ist],
+                                                    dUr[jsg:jeg,isg], mUr[jst:jet,ist],
+                                                tolerance=tolerance, verbose=verbose, message=msg)
+                    msg = 'NP mask E edge (effective)'
+                    dUe[jsg:jeg,ieg] = match_edges(dUe[jsg:jeg,ieg], mUe[jst:jet,iet],
+                                                dUr[jsg:jeg,ieg], mUr[jst:jet,iet],
+                                                tolerance=tolerance, verbose=verbose, message=msg)
+                    msg = 'NP mask N edge (effective)'
+                    dVe[jsg,isg:ieg] = match_edges(dVe[jsg,isg:ieg], mVe[jst,ist:iet],
+                                                dVr[jsg,isg:ieg], mVr[jst,ist:iet],
+                                                tolerance=tolerance, verbose=verbose, message=msg)
+                    msg = 'NP mask S edge (effective)'
+                    dVe[jeg,isg:ieg] = match_edges(dVe[jeg,isg:ieg], mVe[jet,ist:iet],
+                                                dVr[jeg,isg:ieg], mVr[jet,ist:iet],
+                                                tolerance=tolerance, verbose=verbose, message=msg)
+
+            if config.calc_roughness:
+                self.roughness[jsg:jeg,isg:ieg] = mask.roughness[jst:jet,ist:iet]
+            if config.calc_gradient:
+                self.gradient[jsg:jeg,isg:ieg] = mask.gradient[jst:jet,ist:iet]

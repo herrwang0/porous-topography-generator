@@ -1,8 +1,8 @@
 import sys
 import numpy
 
-from external.thinwall.python import GMesh
-from external.thinwall.python import ThinWalls
+from ptopo.external.thinwall.python import GMesh
+from ptopo.external.thinwall.python import ThinWalls
 from .tile_utils import slice_array, decompose_domain, normlize_longitude, box_halo, BoundaryBox, reverse_slice
 from .kernel import CalcConfig
 # from .north_pole import NorthPoleMask
