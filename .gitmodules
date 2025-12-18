@@ -1,7 +1,7 @@
-[submodule "external/thinwall"]
-	path = external/thinwall
+[submodule "thinwall"]
+	path = src/ptopo/external/thinwall
 	url = https://github.com/herrwang0/thin-wall-topography.git
 	branch = stereographic
-[submodule "external/nsidc0756"]
-	path = external/nsidc0756
+[submodule "nsidc0756"]
+	path = src/ptopo/external/nsidc0756
 	url = https://github.com/nsidc/nsidc0756-scripts.git
