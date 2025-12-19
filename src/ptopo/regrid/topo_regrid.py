@@ -133,7 +133,7 @@ class Domain(ThinWalls.ThinWalls):
     """A container for regrided topography
     """
     def __init__(self, lon=None, lat=None, Idx=None, Idy=None, is_geo_coord=True,
-                 reentrant_x=False, fold_n=False, bbox=None, num_north_pole=0, pole_radius=0.25, np_masks=[],
+                 reentrant_x=False, fold_n=False, bbox=None, resolution_masks=None,
                  eds=None, subset_eds=False, src_halo=0):
         """
         Parameters
@@ -178,13 +178,11 @@ class Domain(ThinWalls.ThinWalls):
         if self.fold_n:
             assert self.ni%2==0, 'An odd number ni does not work with bi-polar cap.'
 
-        if num_north_pole > 0:
-            self.north_mask = NorthPoleMask(self, counts=num_north_pole, radius=pole_radius)
-        else:
-            self.north_mask = np_masks
-
-        # self.pole_radius = pole_radius
-        # self.north_mask = self.find_north_pole_rectangles(num_north_pole=num_north_pole)
+        # if num_north_pole > 0:
+        #     self.north_mask = NorthPoleMask(self, counts=num_north_pole, radius=pole_radius)
+        # else:
+        #     self.north_mask = np_masks
+        self.mask_res = resolution_masks
 
         if eds: self._fit_src_coords(eds, subset_eds=subset_eds, halo=src_halo)
 

@@ -13,9 +13,6 @@ def add_regrid_parser(subparsers):
     )
     parser.set_defaults(func=regrid)
 
-    # parser = argparse.ArgumentParser(
-    #     description='Objective topography regridding', formatter_class=argparse.RawTextHelpFormatter
-    # )
     parser.add_argument("-v", "--verbose", action='store_true')
     parser.add_argument("--verbosity", default=0, help='Granularity of log output')
 
@@ -155,8 +152,9 @@ def regrid(args):
         print('np_lat_step: ', np_lat_step)
 
     # Create the target grid domain
-    dm = Domain(lon=lonb_tgt, lat=latb_tgt, Idx=Idx, Idy=Idy, reentrant_x=tgt_reentrant_x,
-                fold_n=tgt_fold_n, num_north_pole=2, pole_radius=refine_config.singularity_radius)
+    # dm = Domain(lon=lonb_tgt, lat=latb_tgt, Idx=Idx, Idy=Idy, reentrant_x=tgt_reentrant_x,
+    #             fold_n=tgt_fold_n, num_north_pole=2, pole_radius=refine_config.singularity_radius)
+    dm = Domain(lon=lonb_tgt, lat=latb_tgt, Idx=Idx, Idy=Idy, reentrant_x=tgt_reentrant_x, fold_n=tgt_fold_n)
     if args.save_hits:
         hm = HitMap(lon=lon_src, lat=lat_src, from_cell_center=True)
     else:

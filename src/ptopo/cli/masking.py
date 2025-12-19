@@ -11,6 +11,8 @@ def add_masking_parser(subparsers):
         formatter_class=argparse.RawTextHelpFormatter,
     )
 
+    parser.set_defaults(func=run_masking)
+
     parser.add_argument("--file-in", required=True, help="topo file")
     parser.add_argument("--file-out", default=None, help="output file")
     parser.add_argument("--var-in", default="depth")
@@ -27,8 +29,6 @@ def add_masking_parser(subparsers):
     parser.add_argument("--subgrid-u-var", action="extend", nargs="+", default=[])
     parser.add_argument("--subgrid-v-var", action="extend", nargs="+", default=[])
     parser.add_argument("-q", "--quiet", action="store_true")
-
-    parser.set_defaults(func=run_masking)
 
     return parser
 
