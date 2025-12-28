@@ -252,6 +252,36 @@ class BoundaryBox:
         """Data local i-slice."""
         return slice(0, self.data_ni)
 
+    def local_masks(self, mask_boxes):
+        """Finds where the mask rectangles overlap"""
+        masks = []
+
+        J0, J1, I0, I1 = self.jdg_slice.start, self.jdg_slice.stop, self.idg_slice.start, self.idg_slice.stop
+
+        for box in mask_boxes:
+            j0m, j1m, i0m, i1m = box.jdg_slice.start, box.jdg_slice.stop, box.idg_slice.start, box.idg_slice.stop
+
+            # Relative indices
+            j0 = max(J0, j0m) - J0
+            j1 = min(J1, j1m) - J0
+            i0 = max(I0, i0m) - I0
+            i1 = min(I1, i1m) - I0
+
+            # if mask boundary is beyond subdomain boundary but within halo, ignore halo
+            if j0m <= self.j0: j0 = 0
+            if j1m >= self.j1: j1 = self.data_nj
+            if i0m <= self.i0: i0 = 0
+            if i1m >= self.i1: i1 = self.data_ni
+            # # The following addresses a very trivial case when the mask reaches
+            # # the southern bounndary, which may only happen in tests.
+            # if j0m == 0 and self.j0 < 0: j0 = 0
+
+            if j1 > j0 and i1 > i0:
+                masks.append(
+                    BoundaryBox(j0=j0, j1=j1, i0=i0, i1=i1, halo=0, position=GLOBAL_POS)
+                )
+        return masks
+
 def reverse_slice(s: slice) -> slice:
     start, stop = s.start, s.stop
     step = s.step or 1

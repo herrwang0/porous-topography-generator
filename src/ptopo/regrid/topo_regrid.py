@@ -272,7 +272,8 @@ class Domain(ThinWalls.ThinWalls):
                 lat = slice_array(self.lat, bbox=bbox, cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
                 if norm_lon: lon = normlize_longitude(lon, lat)
 
-                masks = self.north_mask.find_local_masks(bbox)
+                # masks = self.north_mask.find_local_masks(bbox)
+                masks = bbox.local_masks(self.north_mask)
                 if self.Idx is None: Idx = None
                 else: Idx = slice_array(self.Idx, bbox=bbox, position='center', cyclic_zonal=self.reentrant_x, fold_north=self.fold_n)
                 if self.Idy is None: Idy = None
