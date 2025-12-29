@@ -282,6 +282,20 @@ class BoundaryBox:
                 )
         return masks
 
+    def with_halo(self, halo: Union[int, tuple[int, int]]):
+        """
+        Return a new BoundaryBox with the same global computation bounds
+        but a different halo.
+        """
+        return BoundaryBox(
+            j0=self.j0,
+            j1=self.j1,
+            i0=self.i0,
+            i1=self.i1,
+            halo=halo,
+            position=self.position
+        )
+
 def reverse_slice(s: slice) -> slice:
     start, stop = s.start, s.stop
     step = s.step or 1
