@@ -135,22 +135,22 @@ class BoundaryBox:
 
     @property
     def J0cg(self) -> int:
-        """Computation global western edge."""
+        """Computation global southern edge."""
         return self.j0
 
     @property
     def J1cg(self) -> int:
-        """Computation global eastern edge."""
+        """Computation global northern edge."""
         return self.j1
 
     @property
     def I0cg(self) -> int:
-        """Computation global southern edge."""
+        """Computation global western edge."""
         return self.i0
 
     @property
     def I1cg(self) -> int:
-        """Computation global northern edge."""
+        """Computation global eastern edge."""
         return self.i1
 
     @property
@@ -201,23 +201,23 @@ class BoundaryBox:
 
     @property
     def J0cl(self) -> int:
-        """Computation local western edge."""
+        """Computation local southern edge."""
         return self.halo_j
 
     @property
     def J1cl(self) -> int:
-        """Computation local eastern edge."""
-        return self.data_nj - self.halo_j + 1
+        """Computation local northern edge."""
+        return self.data_nj - self.halo_j
 
     @property
     def I0cl(self) -> int:
-        """Computation local southern edge."""
+        """Computation local western edge."""
         return self.halo_i
 
     @property
     def I1cl(self) -> int:
-        """Computation local northern edge."""
-        return self.data_ni - self.halo_i + 1
+        """Computation local eastern edge."""
+        return self.data_ni - self.halo_i
 
     @property
     def Jcl_inner_slice(self) -> slice:
