@@ -126,14 +126,16 @@ def regrid(args):
     pe = args.pe
     pe_p = args.pe_p
     if pe_p is None: pe_p = pe
-    nprocs = args.nprocs
+    # nprocs = args.nprocs
 
     # Calculation options
     calc_config = CalcConfig(
         calc_cell_stats=(not args.mean_only),
         _thinwalls=args.do_thinwalls, _effective_tw=args.do_thinwalls_effective, thinwalls_interp=args.thinwalls_interp,
-        calc_roughness=args.do_roughness, calc_gradient=args.do_gradient
+        calc_roughness=args.do_roughness, calc_gradient=args.do_gradient, save_hits=args.save_hits
     )
+    if args.verbose:
+        calc_config.print_options()
 
     # Regridding and topo_gen options
     north_pole_lat = args.pole_start
@@ -156,7 +158,7 @@ def regrid(args):
 
     # Create the target grid domain
     domain = Domain(lon=lonb_tgt, lat=latb_tgt, Idx=Idx, Idy=Idy, reentrant_x=tgt_reentrant_x, fold_n=tgt_fold_n, eds=eds)
-    if args.save_hits:
+    if calc_config.save_hits:
         hm = HitMap(lon=lon_src, lat=lat_src, from_cell_center=True)
     else:
         hm = None
@@ -180,7 +182,7 @@ def regrid(args):
     twlist, hitlist = [], []
     for tile in tiles.flatten():
         out = topo_gen(
-            tile, refine_config=refine_config, save_hits=args.save_hits, verbose=True, timers=True
+            tile, config=calc_config, refine_config=refine_config, verbose=True, timers=True
         )
         twlist.append( out['tw'] )
         hitlist.append( out['hits'] )
@@ -191,7 +193,7 @@ def regrid(args):
     # else: # with nprocs==1, multiprocessing is not used.
     #     twlist = [topo_gen(sdm, refine_config=refine_config, save_hits=(not (hm is None)), verbose=True, timers=True, tw_interp=args.thinwalls_interp) for sdm in subdomains.flatten()]
 
-    if args.save_hits:
+    if calc_config.save_hits:
         hm.stitch_hits(hitlist)
 
     domain.stitch_tiles(
@@ -213,7 +215,7 @@ def regrid(args):
         domain, args.output, config=calc_config, output_refine=True, format='NETCDF3_64BIT_OFFSET', history=' '.join(sys.argv)
     )
 
-    if args.save_hits:
+    if calc_config.save_hits:
         write_hitmap(hm, 'hitmap.nc')
 
     clock.delta('Write output')

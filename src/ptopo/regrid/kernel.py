@@ -35,9 +35,10 @@ class CalcConfig:
     calc_cell_stats: bool = True
     _thinwalls: bool = True
     _effective_tw: bool = False
+    thinwalls_interp: str = 'max'
     calc_roughness: bool = False
     calc_gradient: bool = False
-    thinwalls_interp: str = 'max'
+    save_hits : bool = False
 
     def __post_init__(self):
         if not self.calc_thinwalls and self.thinwalls_interp is not None:
@@ -49,30 +50,40 @@ class CalcConfig:
 
     @property
     def calc_effective_tw(self):
-        return self.calc_thinwalls and self._effective_tw
+        if self.calc_thinwalls:
+            return self.calc_thinwalls and self._effective_tw
+        else:
+            return None
 
     def print_options(self):
-        # Public dataclass fields
-        public_fields = {}
-        for f in fields(self):
-            if f.name.startswith("_"):
-                continue
-            if f.name == "thinwalls_interp" and not self.calc_thinwalls:
-                continue
-            public_fields[f.name] = getattr(self, f.name)
+        order = [
+            "calc_cell_stats",
+            "calc_thinwalls",
+            "thinwalls_interp",
+            "calc_effective_tw",
+            "calc_roughness",
+            "calc_gradient",
+            "save_hits"
+        ]
 
-        # Properties
-        properties = ['calc_thinwalls', 'calc_effective_tw']
-        for prop in properties:
-            val = getattr(self, prop)
-            if prop == "calc_effective_tw" and not self.calc_thinwalls:
-                continue
-            public_fields[prop] = val
+        # Build a dict of all values, respecting conditions
+        all_values = {
+            "calc_cell_stats": self.calc_cell_stats,
+            "calc_thinwalls": self.calc_thinwalls,
+            "thinwalls_interp": self.thinwalls_interp,
+            "calc_effective_tw": self.calc_effective_tw if self.calc_thinwalls else None,
+            "calc_roughness": self.calc_roughness,
+            "calc_gradient": self.calc_gradient,
+            "save_hits": self.save_hits
+        }
 
-        max_len = max(len(k) for k in public_fields.keys())
+        max_len = max(len(k) for k in order)
         print("CalcConfig Options:")
-        for key, value in public_fields.items():
-            print(f"  {key.ljust(max_len)} : {value}")
+        for key in order:
+            # Skip thinwalls_interp and calc_effective_tw if calc_thinwalls is False
+            if key in ["thinwalls_interp", "calc_effective_tw"] and not self.calc_thinwalls:
+                continue
+            print(f"  {key.ljust(max_len)} : {all_values[key]}")
 
 class TimeLog(object):
     """An object logging times"""
@@ -137,7 +148,7 @@ class HitMap(GMesh.GMesh):
         """Plots hit map"""
         return axis.pcolormesh( self.lon, self.lat, self[:,:], **kwargs )
 
-def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), save_hits=True, verbose=True, timers=False):
+def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), verbose=True, timers=False):
     """The main function for generating topography
 
     Parameters
@@ -168,7 +179,7 @@ def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), save_hits=
     levels[-1].project_source_data_onto_target_mesh(
         grid.eds, use_center=refine_config.use_center, work_in_3d=refine_config.work_in_3d
     )
-    if save_hits:
+    if config.save_hits:
         lon_src, lat_src = grid.eds.lon_coord, grid.eds.lat_coord
         hits = HitMap(shape=(lat_src.size, lon_src.size))
         hits[:] = levels[-1].source_hits(grid.eds, use_center=refine_config.use_center, singularity_radius=0.0)
@@ -239,15 +250,15 @@ def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), save_hits=
 
     out = dict.fromkeys(['tw', 'hits'])
     out['tw'] = tw
-    if save_hits: out['hits'] = hits
+    if config.save_hits: out['hits'] = hits
     return out
 
-def topo_gen_mp(domain_list, nprocs=None, refine_config=RefineConfig(), save_hits=False, verbose=False, timers=False):
+def topo_gen_mp(domain_list, nprocs=None, config=CalcConfig(), refine_config=RefineConfig(), verbose=False, timers=False):
     """A wrapper for multiprocessing topo_gen"""
     if nprocs is None:
         nprocs = len(domain_list)
     pool = multiprocessing.Pool(processes=nprocs)
-    tw_list = pool.map(functools.partial(topo_gen, save_hits=save_hits, verbose=verbose, timers=timers, refine_config=refine_config), domain_list)
+    tw_list = pool.map(functools.partial(topo_gen, verbose=verbose, timers=timers, config=config, refine_config=refine_config), domain_list)
     pool.close()
     pool.join()
 
