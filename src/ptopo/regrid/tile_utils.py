@@ -311,7 +311,8 @@ def reverse_slice(s: slice) -> slice:
     return slice(stop - 1, start - 1, -step)
 
 def slice_array(arr, bbox, position='corner', fold_north=True, cyclic_zonal=True, fold_south=False):
-    """Slice a 2D field with extend indices that cover halos
+    """
+    Slice a 2D field with extend indices that cover halos
     Treatment of halos beyond the boundaries:
     If not specified, all boundaries are assumed to be reflective.
         For example, to extend 2 point from | 0, 1, 2 ... => 1, 0, | 0, 1, 2...

@@ -193,36 +193,36 @@ class Domain(ThinWalls.ThinWalls):
                     print(chunks[pe_j, pe_i], '\n')
         return chunks
 
-    def create_mask_domain(self, mask, tgt_halo=0, norm_lon=True, pole_radius=0.25):
-        """Creates a domain for the masked north pole region
+    # def create_mask_domain(self, mask, tgt_halo=0, norm_lon=True, pole_radius=0.25):
+    #     """Creates a domain for the masked north pole region
 
-        Parameters
-        ----------
-        mask : tuple
-            Tuple of mask rectangle indices
-        tgt_halo : int, optional
-            Halo size
-        pole_radius : float, optional
-            Polar radius in the new mask domain
-        Returns
-        ----------
-        Output : Domain object
-        """
-        jst, jed, ist, ied = mask
-        mask_halo = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
-        lon = slice_array(self.lon, box=mask_halo, cyclic_zonal=False, fold_north=True)
-        lat = slice_array(self.lat, box=mask_halo, cyclic_zonal=False, fold_north=True)
-        if norm_lon: lon = normlize_longitude(lon, lat)
+    #     Parameters
+    #     ----------
+    #     mask : tuple
+    #         Tuple of mask rectangle indices
+    #     tgt_halo : int, optional
+    #         Halo size
+    #     pole_radius : float, optional
+    #         Polar radius in the new mask domain
+    #     Returns
+    #     ----------
+    #     Output : Domain object
+    #     """
+    #     jst, jed, ist, ied = mask
+    #     mask_halo = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
+    #     lon = slice_array(self.lon, box=mask_halo, cyclic_zonal=False, fold_north=True)
+    #     lat = slice_array(self.lat, box=mask_halo, cyclic_zonal=False, fold_north=True)
+    #     if norm_lon: lon = normlize_longitude(lon, lat)
 
-        Idx, Idy = None, None
-        if self.Idx is not None:
-            Idx = slice_array(self.Idx, box=mask_halo, position='center',
-                              cyclic_zonal=False, fold_north=True)
-        if self.Idy is not None:
-            Idy = slice_array(self.Idy, box=mask_halo, position='center',
-                              cyclic_zonal=False, fold_north=True)
+    #     Idx, Idy = None, None
+    #     if self.Idx is not None:
+    #         Idx = slice_array(self.Idx, box=mask_halo, position='center',
+    #                           cyclic_zonal=False, fold_north=True)
+    #     if self.Idy is not None:
+    #         Idy = slice_array(self.Idy, box=mask_halo, position='center',
+    #                           cyclic_zonal=False, fold_north=True)
 
-        return Domain(lon=lon, lat=lat, Idx=Idx, Idy=Idy, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius)
+    #     return Domain(lon=lon, lat=lat, Idx=Idx, Idy=Idy, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius)
 
     def _stitch_tile(self, tile, config):
         """
