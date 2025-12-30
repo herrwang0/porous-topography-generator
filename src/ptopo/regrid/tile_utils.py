@@ -4,7 +4,8 @@ tile_utils.py
 Pure helper functions for creating tiles
 """
 
-import numpy
+import numpy as np
+import warnings
 from dataclasses import dataclass
 from typing import Tuple, Union
 
@@ -411,42 +412,67 @@ def slice_array(arr, bbox, position='corner', fold_north=True, cyclic_zonal=True
     # print(NoWe.shape, North.shape, NoEa.shape)
     # print(West.shape, Center.shape, East.shape)
     # print(SoWe.shape, South.shape, SoEa.shape)
-    return numpy.r_[numpy.c_[SoWe, South, SoEa], numpy.c_[West, Center, East], numpy.c_[NoWe, North, NoEa]]
+    return np.r_[np.c_[SoWe, South, SoEa], np.c_[West, Center, East], np.c_[NoWe, North, NoEa]]
 
 def decompose_domain(N, nd, symmetric=False):
-    """Decompose 1-D domain
+    """
+    Decompose a 1-D domain into contiguous sub-domains.
 
     Parameters
     ----------
-    N : integer
+    N : int
         Number of grid points in the 1-D domain
-    nd : integer
-        Number of sub-domains
+    nd : int
+        Number of requested sub-domains
     symmetric : bool, optional
-        When true, try to generate a symmetric decomposition
+        When True, attempt to distribute remainder points symmetrically
 
     Returns
-    ----------
-    Out : ndarray
-        A list of starting and ending indices of the sub-domains
+    -------
+    ndarray of shape (k, 2)
+        Each row is (start, end) for a sub-domain
     """
 
-    if nd>N:
-        print("Warning: number of sub-domains > number of grid points. Actual sub-domain number is reduced to %i."%N)
-        return numpy.array([(ist,ist+1) for ist in range(N)], dtype='i,i')
+    if N < 0:
+        raise ValueError("N must be non-negative")
+    if nd <= 0:
+        raise ValueError("nd must be positive")
 
-    dn = numpy.ones((nd,), dtype=numpy.int16)*(N//nd)
-    res = N%nd
+    # Degenerate case: more subdomains than points
+    if nd > N:
+        warnings.warn(
+            f"number of sub-domains ({nd}) > number of grid points ({N}); "
+            f"reducing to {N}",
+            UserWarning,
+        )
+        return np.array([(i, i + 1) for i in range(N)], dtype="i,i")
 
-    if ((nd%2==0) and (res%2==1)) or (not symmetric):
-        dn[:res] += 1
-    else:
-        if (nd%2==0) and (res%2==0):
-            dn[nd//2-res//2:nd//2+res//2] += 1
-        if (nd%2==1):
-            dn[nd//2-res//2:nd//2+res//2+1] += 1
-            if (res%2==0): dn[nd//2] -= 1
-    return numpy.array([(ist, ied) for ist, ied in zip(numpy.r_[0, numpy.cumsum(dn)[:-1]],numpy.cumsum(dn))], dtype='i,i')
+    # Base size and remainder
+    base = N // nd
+    rem = N % nd
+
+    sizes = np.full(nd, base, dtype=np.int16)
+
+    if rem > 0:
+        if not symmetric or (nd % 2 == 0 and rem % 2 == 1):
+            # Left-biased distribution
+            sizes[:rem] += 1
+        else:
+            # Symmetric distribution around center
+            mid = nd // 2
+            half = rem // 2
+
+            if nd % 2 == 0: # rem % 2 == 0
+                sizes[mid - half : mid + half] += 1
+            else:
+                sizes[mid - half : mid + half + 1] += 1
+                if rem % 2 == 0:
+                    sizes[mid] -= 1
+
+    starts = np.concatenate(([0], np.cumsum(sizes[:-1])))
+    ends = np.cumsum(sizes)
+
+    return np.array(list(zip(starts, ends)), dtype="i,i")
 
 def box_halo(box, halo):
     """Extend box with halo"""
@@ -462,12 +488,12 @@ def normlize_longitude(lon, lat):
     # To avoid jumps, the reference longitude should be outside of the domain.
     # reflon is a best-guess of a reference longitude.
     reflon = lon[lon.shape[0]//2, lon.shape[1]//2] - 180.0
-    lon_shift = numpy.mod(lon-reflon, 360.0) + reflon
+    lon_shift = np.mod(lon-reflon, 360.0) + reflon
 
     # North Pole longitude should be within the range of the rest of the domain
-    Jp, Ip = numpy.nonzero(lat==90)
+    Jp, Ip = np.nonzero(lat==90)
     for jj, ii in zip(Jp, Ip):
         if lon_shift[jj, ii]==lon_shift.max() or lon_shift[jj, ii]==lon_shift.min():
-            lon_shift[jj, ii] = numpy.nan
-            lon_shift[jj, ii] = numpy.nanmean(lon_shift)
+            lon_shift[jj, ii] = np.nan
+            lon_shift[jj, ii] = np.nanmean(lon_shift)
     return lon_shift

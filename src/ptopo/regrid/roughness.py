@@ -1,4 +1,7 @@
-"""A function to calculate roughness and gradient.
+"""
+roughness.py
+
+A function to calculate roughness and gradient.
 
 Modified from code by A. Adcroft
 """

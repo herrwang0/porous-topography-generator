@@ -7,7 +7,7 @@ from .tile_utils import slice_array, decompose_domain, normlize_longitude, box_h
 from .kernel import CalcConfig
 
 class Domain(ThinWalls.ThinWalls):
-    """A container for regrided topography
+    """A container for regridded topography
     """
     def __init__(self, lon=None, lat=None, Idx=None, Idy=None, is_geo_coord=True,
                  reentrant_x=False, fold_n=False, bbox=None, resolution_masks=[],
