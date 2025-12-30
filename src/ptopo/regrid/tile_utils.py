@@ -341,11 +341,10 @@ def slice_array(arr, bbox, position='corner', fold_north=True, cyclic_zonal=True
 
     Returns
     ----------
-    Out : ndarray
+    ndarray
         sliced field
     """
     Nj, Ni = arr.shape
-    # jst, jed, ist, ied = box
     jst, jed, ist, ied = bbox.jdg_slice.start, bbox.jdg_slice.stop, bbox.idg_slice.start, bbox.idg_slice.stop
 
     # Additional points for staggered locations (symmetric)
@@ -357,7 +356,7 @@ def slice_array(arr, bbox, position='corner', fold_north=True, cyclic_zonal=True
         oy, ox = 0, 1
     elif position == 'v':
         oy, ox = 1, 0
-    else: raise Exception('Unknown grid position.')
+    else: raise ValueError(f"Unknown grid position: {position}")
 
     # The center piece reach the natural boundaries of the domain
     #   This is equivalent to slice(max(jst,0), min(jed+oy, Ni))

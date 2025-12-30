@@ -37,22 +37,37 @@ class CalcConfig:
     _effective_tw: bool = False
     calc_roughness: bool = False
     calc_gradient: bool = False
+    thinwalls_interp: str = 'max'
+
+    def __post_init__(self):
+        if not self.calc_thinwalls and self.thinwalls_interp is not None:
+            self.thinwalls_interp = None
 
     @property
     def calc_thinwalls(self):
         return self._thinwalls and self.calc_cell_stats
+
     @property
     def calc_effective_tw(self):
         return self.calc_thinwalls and self._effective_tw
 
     def print_options(self):
         # Public dataclass fields
-        public_fields = {f.name: getattr(self, f.name)
-                         for f in fields(self) if not f.name.startswith("_")}
+        public_fields = {}
+        for f in fields(self):
+            if f.name.startswith("_"):
+                continue
+            if f.name == "thinwalls_interp" and not self.calc_thinwalls:
+                continue
+            public_fields[f.name] = getattr(self, f.name)
+
         # Properties
         properties = ['calc_thinwalls', 'calc_effective_tw']
         for prop in properties:
-            public_fields[prop] = getattr(self, prop)
+            val = getattr(self, prop)
+            if prop == "calc_effective_tw" and not self.calc_thinwalls:
+                continue
+            public_fields[prop] = val
 
         max_len = max(len(k) for k in public_fields.keys())
         print("CalcConfig Options:")
@@ -122,7 +137,7 @@ class HitMap(GMesh.GMesh):
         """Plots hit map"""
         return axis.pcolormesh( self.lon, self.lat, self[:,:], **kwargs )
 
-def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), tw_interp='max', save_hits=True, verbose=True, timers=False):
+def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), save_hits=True, verbose=True, timers=False):
     """The main function for generating topography
 
     Parameters
@@ -165,7 +180,7 @@ def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), tw_interp=
     if refine_config.use_center:
         tw.set_cell_mean(levels[-1].height)
         if config.calc_thinwalls:
-            tw.set_edge_to_step(tw_interp)
+            tw.set_edge_to_step(config.thinwalls_interp)
     else:
         tw.set_center_from_corner(levels[-1].height)
         if config.calc_thinwalls:
@@ -208,7 +223,9 @@ def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), tw_interp=
     if timers: clock.delta('refine loop (total)', ref_time=loop_start)
 
     out = subgrid_roughness_gradient(
-        levels, tw.c_simple.ave, do_roughness=config.calc_roughness, do_gradient=config.calc_gradient, Idx=grid.Idx, Idy=grid.Idy)
+        levels, tw.c_simple.ave, do_roughness=config.calc_roughness, do_gradient=config.calc_gradient,
+        Idx=grid.Idx, Idy=grid.Idy
+    )
     tw.roughness, tw.gradient = out['h2'], out['gh']
     if timers: clock.delta("roughness/gradient")
 
@@ -225,12 +242,12 @@ def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), tw_interp=
     if save_hits: out['hits'] = hits
     return out
 
-def topo_gen_mp(domain_list, nprocs=None, refine_config=RefineConfig(), save_hits=False, verbose=False, timers=False, tw_interp='max'):
+def topo_gen_mp(domain_list, nprocs=None, refine_config=RefineConfig(), save_hits=False, verbose=False, timers=False):
     """A wrapper for multiprocessing topo_gen"""
     if nprocs is None:
         nprocs = len(domain_list)
     pool = multiprocessing.Pool(processes=nprocs)
-    tw_list = pool.map(functools.partial(topo_gen, save_hits=save_hits, verbose=verbose, timers=timers, tw_interp=tw_interp, refine_config=refine_config), domain_list)
+    tw_list = pool.map(functools.partial(topo_gen, save_hits=save_hits, verbose=verbose, timers=timers, refine_config=refine_config), domain_list)
     pool.close()
     pool.join()
 

@@ -91,7 +91,8 @@ class Domain(ThinWalls.ThinWalls):
             self.eds = eds
 
     def make_subdomain(self, bbox, norm_lon=False, reentrant_x=None, fold_n=None, masks=[], subset_eds=False, src_halo=0):
-        """Makes a sub-domains from a BoundaryBox.
+        """
+        Makes a sub-domains from a BoundaryBox.
 
         Parameters
         ----------
@@ -131,7 +132,7 @@ class Domain(ThinWalls.ThinWalls):
 
         return Domain(
             lon=lon, lat=lat, Idx=Idx, Idy=Idy, is_geo_coord=self.is_geo_coord,
-            reentrant_x=reentrant_x, fold_n=fold_n, bbox=bbox, resolution_masks=masks,
+            reentrant_x=False, fold_n=False, bbox=bbox, resolution_masks=masks,
             eds=self.eds, subset_eds=subset_eds, src_halo=src_halo
         )
 
@@ -355,7 +356,7 @@ class Domain(ThinWalls.ThinWalls):
                 tolerance=tolerance, verbose=verbose, message=edgeloc+' (effective)'
             )
 
-    def _stitch_reentrant_x(self, tolerance, calc_effective=False, verbose=False):
+    def stitch_reentrant_x(self, tolerance, calc_effective=False, verbose=False):
         """
         Verify and reconcile the cyclic western/eastern edges
         """
@@ -375,7 +376,7 @@ class Domain(ThinWalls.ThinWalls):
             )
             self.u_effective[:, -1] = self.u_effective[:, 0]
 
-    def _stitch_fold_n(self, tolerance, calc_effective=False, verbose=False):
+    def stitch_fold_n(self, tolerance, calc_effective=False, verbose=False):
         """
         Verify and reconcile the folding northern edge
         """
@@ -431,9 +432,9 @@ class Domain(ThinWalls.ThinWalls):
                 for ix in range(npi):
                     self._stitch_j( tiles[iy, ix], tiles[iy+1, ix], tolerance, calc_effective=config.calc_effective_tw, verbose=verbose )
             if self.reentrant_x:
-                self._stitch_reentrant_x( tolerance=tolerance, calc_effective=config.calc_effective_tw, verbose=verbose )
+                self.stitch_reentrant_x( tolerance=tolerance, calc_effective=config.calc_effective_tw, verbose=verbose )
             if self.fold_n:
-                self._stitch_fold_n( tolerance=tolerance, calc_effective=config.calc_effective_tw, verbose=verbose )
+                self.stitch_fold_n( tolerance=tolerance, calc_effective=config.calc_effective_tw, verbose=verbose )
 
     def stitch_mask(self, mask, config=CalcConfig(), tolerance=2, verbose=False):
         """

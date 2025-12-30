@@ -30,7 +30,7 @@ def add_regrid_parser(subparsers):
 
     parser_src = parser.add_argument_group('Source data')
     parser_src.add_argument("--source", default='', help='File name of the source data')
-    parser_src.add_argument("--coord-source", default='', help='File name of the source coordinate (can be different from source)')
+    parser_src.add_argument("--source-coord", default='', help='File name of the source coordinate (can be different from source)')
     parser_src.add_argument("--lon-src", default='lon', help='Field name in source file for longitude')
     parser_src.add_argument("--lat-src", default='lat', help='Field name in source file for latitude')
     parser_src.add_argument("--src-halo", default=0, type=int, help='Halo size of at both directions for subsetting source data')
@@ -49,7 +49,7 @@ def add_regrid_parser(subparsers):
     parser_cc.add_argument("--save_hits", action='store_true', help='Save hitmap to a file')
 
     parser_pe = parser.add_argument_group('Parallelism options')
-    parser_pe.add_argument("--nprocs", default=0, type=int, help='Number of processors used in parallel')
+    # parser_pe.add_argument("--nprocs", default=0, type=int, help='Number of processors used in parallel')
     parser_pe.add_argument("--pe", nargs='+', type=int, help='Domain decomposition layout')
     parser_pe.add_argument("--pe_p", nargs='+', type=int, help='Domain decomposition layout for the North Pole rectangles')
     parser_pe.add_argument("--max_mb", default=10240, type=float, help='Memory limit per processor')
@@ -81,12 +81,12 @@ def regrid(args):
         print(  "'"+args.lon_src+"'", '-> lon_src')
         print(  "'"+args.lat_src+"'", '-> lat_src')
         print(  "'"+args.elev+"'", '-> elev')
-    if args.coord_source:
-        coord_source = args.coord_source
+    if args.source_coord:
+        source_coord = args.source_coord
     else:
-        coord_source = args.source
-    lon_src = netCDF4.Dataset(coord_source)[args.lon_src][:]
-    lat_src = netCDF4.Dataset(coord_source)[args.lat_src][:]
+        source_coord = args.source
+    lon_src = netCDF4.Dataset(source_coord)[args.lon_src][:]
+    lat_src = netCDF4.Dataset(source_coord)[args.lat_src][:]
     elev = netCDF4.Dataset(args.source)[args.elev][:]
     if args.remove_src_repeat_lon:
         lon_src = lon_src[:-1]
@@ -130,7 +130,8 @@ def regrid(args):
 
     # Calculation options
     calc_config = CalcConfig(
-        calc_cell_stats=(not args.mean_only), _thinwalls=args.do_thinwalls, _effective_tw=args.do_thinwalls_effective,
+        calc_cell_stats=(not args.mean_only),
+        _thinwalls=args.do_thinwalls, _effective_tw=args.do_thinwalls_effective, thinwalls_interp=args.thinwalls_interp,
         calc_roughness=args.do_roughness, calc_gradient=args.do_gradient
     )
 
@@ -154,9 +155,7 @@ def regrid(args):
         print('np_lat_step: ', np_lat_step)
 
     # Create the target grid domain
-    # dm = Domain(lon=lonb_tgt, lat=latb_tgt, Idx=Idx, Idy=Idy, reentrant_x=tgt_reentrant_x,
-    #             fold_n=tgt_fold_n, num_north_pole=2, pole_radius=refine_config.singularity_radius)
-    dm = Domain(lon=lonb_tgt, lat=latb_tgt, Idx=Idx, Idy=Idy, reentrant_x=tgt_reentrant_x, fold_n=tgt_fold_n, eds=eds)
+    domain = Domain(lon=lonb_tgt, lat=latb_tgt, Idx=Idx, Idy=Idy, reentrant_x=tgt_reentrant_x, fold_n=tgt_fold_n, eds=eds)
     if args.save_hits:
         hm = HitMap(lon=lon_src, lat=lat_src, from_cell_center=True)
     else:
@@ -173,36 +172,50 @@ def regrid(args):
     # dm.regrid_topography(pelayout=pe, tgt_halo=args.tgt_halo, nprocs=nprocs, eds=eds, src_halo=args.src_halo,
     #                      refine_loop_args=refine_options, calc_args=calc_args, hitmap=hm,
     #                      bnd_tol_level=bnd_tol_level, verbose=args.verbose)
-    subdomains = dm.make_tiles(pelayout=pe, tgt_halo=args.tgt_halo, subset_eds=True, src_halo=args.src_halo,
-                                      verbose=False)
+    tiles = domain.make_tiles(
+        pelayout=pe, tgt_halo=args.tgt_halo, subset_eds=True, src_halo=args.src_halo, verbose=False
+    )
     # clock.delta('Domain decomposition')
 
-    if nprocs>1:
-        twlist = topo_gen_mp(subdomains.flatten(), nprocs=nprocs,
-                             refine_config=refine_config, save_hits=(not (hm is None)), verbose=True, timers=True, tw_interp=args.thinwalls_interp)
-    else: # with nprocs==1, multiprocessing is not used.
-        twlist = [topo_gen(sdm, refine_config=refine_config, save_hits=(not (hm is None)), verbose=True, timers=True, tw_interp=args.thinwalls_interp) for sdm in subdomains.flatten()]
+    twlist, hitlist = [], []
+    for tile in tiles.flatten():
+        out = topo_gen(
+            tile, refine_config=refine_config, save_hits=args.save_hits, verbose=True, timers=True
+        )
+        twlist.append( out['tw'] )
+        hitlist.append( out['hits'] )
 
-    if not (hm is None):
-        twlist, hitlist = zip(*twlist)
+    # if nprocs>1:
+    #     twlist = topo_gen_mp(subdomains.flatten(), nprocs=nprocs,
+    #                          refine_config=refine_config, save_hits=(not (hm is None)), verbose=True, timers=True, tw_interp=args.thinwalls_interp)
+    # else: # with nprocs==1, multiprocessing is not used.
+    #     twlist = [topo_gen(sdm, refine_config=refine_config, save_hits=(not (hm is None)), verbose=True, timers=True, tw_interp=args.thinwalls_interp) for sdm in subdomains.flatten()]
+
+    if args.save_hits:
         hm.stitch_hits(hitlist)
 
-    dm.stitch_tiles([tw['tw'] for tw in twlist], tolerance=bnd_tol_level, config=calc_config, verbose=args.verbose)
+    domain.stitch_tiles(
+        twlist, tolerance=bnd_tol_level, config=calc_config, verbose=args.verbose
+    )
 
     clock.delta('Regrid main')
-    if args.fixed_refine_level<0:
-        if args.verbose:
-            print('Starting regridding masked North Pole')
-        # Donut update near the (geographic) north pole
-        dm.regrid_topography_masked(lat_end=np_lat_end, lat_step=np_lat_step, pelayout=pe_p, nprocs=nprocs, tgt_halo=args.tgt_halo, eds=eds, src_halo=args.src_halo,
-                                    refine_loop_args=refine_config, calc_args={}, hitmap=hm, verbose=args.verbose)
+
+    # if args.fixed_refine_level<0:
+    #     if args.verbose:
+    #         print('Starting regridding masked North Pole')
+    #     # Donut update near the (geographic) north pole
+    #     dm.regrid_topography_masked(lat_end=np_lat_end, lat_step=np_lat_step, pelayout=pe_p, nprocs=nprocs, tgt_halo=args.tgt_halo, eds=eds, src_halo=args.src_halo,
+    #                                 refine_loop_args=refine_config, calc_args={}, hitmap=hm, verbose=args.verbose)
     clock.delta('Regrid masked')
 
     # Output to a netCDF file
-    write_output(dm, args.output, config=calc_config, output_refine=True, format='NETCDF3_64BIT_OFFSET',
-                 history=' '.join(sys.argv))
+    write_output(
+        domain, args.output, config=calc_config, output_refine=True, format='NETCDF3_64BIT_OFFSET', history=' '.join(sys.argv)
+    )
+
     if args.save_hits:
         write_hitmap(hm, 'hitmap.nc')
+
     clock.delta('Write output')
 
     clock.print()
