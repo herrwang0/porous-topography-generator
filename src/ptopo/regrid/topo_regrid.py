@@ -224,15 +224,15 @@ class Domain(ThinWalls.ThinWalls):
 
         return Domain(lon=lon, lat=lat, Idx=Idx, Idy=Idy, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius)
 
-    def _stitch_tile_center(self, tile, config):
+    def _stitch_tile(self, tile, config):
         """
-        Stitch all cell-center and inner edges properties
+        Stitch all cell-center and all edges properties
         """
         jg_slice, ig_slice = tile.bbox.jcg_slice, tile.bbox.icg_slice
         jl_slice, il_slice = tile.bbox.jcl_slice, tile.bbox.icl_slice
 
-        Jg_slice, Ig_slice = tile.bbox.Jcg_inner_slice, tile.bbox.Icg_inner_slice
-        Jl_slice, Il_slice = tile.bbox.Jcl_inner_slice, tile.bbox.Icl_inner_slice
+        Jg_slice, Ig_slice = tile.bbox.Jcg_outer_slice, tile.bbox.Icg_outer_slice
+        Jl_slice, Il_slice = tile.bbox.Jcl_outer_slice, tile.bbox.Icl_outer_slice
 
         self.c_simple[jg_slice, ig_slice] = tile.c_simple[jl_slice, il_slice]
         self.c_rfl[jg_slice, ig_slice] = tile.mrfl
@@ -254,7 +254,7 @@ class Domain(ThinWalls.ThinWalls):
 
     def _stitch_i(self, left, right, tolerance, calc_effective=False, verbose=False):
         """
-        Stitch along i between two edge providers (tile or domain).
+        Reconcile shared edges from two providers (tile or domain) along i.
         """
         lbox, rbox = left.bbox, right.bbox
         if lbox.position == GLOBAL_POS and rbox.position == GLOBAL_POS:
@@ -306,7 +306,7 @@ class Domain(ThinWalls.ThinWalls):
 
     def _stitch_j(self, bottom, top, tolerance, calc_effective=False, verbose=False):
         """
-        Stitch along j between two edge providers (tile or domain).
+        Reconcile shared edges from two providers (tile or domain) along j.
         """
         bbox, tbox = bottom.bbox, top.bbox
         if bbox.position == GLOBAL_POS and tbox.position == GLOBAL_POS:
@@ -355,58 +355,52 @@ class Domain(ThinWalls.ThinWalls):
                 tolerance=tolerance, verbose=verbose, message=edgeloc+' (effective)'
             )
 
-    def _stitch_fold_n(self, tiles, tolerance, calc_effective=False, verbose=False):
+    def _stitch_reentrant_x(self, tolerance, calc_effective=False, verbose=False):
         """
-        Stitch the folding northern edge
+        Verify and reconcile the cyclic western/eastern edges
         """
-        _, npi = tiles.shape
-        for ix in range(npi//2):
-            bottom, top = tiles[-1,ix], tiles[-1,npi-ix-1]
 
-            global_i_slice_b, global_i_slice_t = bottom.bbox.icg_slice, top.bbox.icg_slice
-            local_J_b, local_i_slice_b = bottom.bbox.J1cl, bottom.bbox.icl_slice
-            local_J_t, local_i_slice_t = top.bbox.J1cl, top.bbox.icl_slice
+        msg = 'zonal boundaries (simple)'
+        self.u_simple[:, 0] = match_edges(
+            self.u_simple[:, 0], self.u_simple[:, -1], self.u_rfl[:, 0], self.u_rfl[:, -1],
+            tolerance=tolerance, verbose=verbose, message=msg
+        )
+        self.u_simple[:, -1] = self.u_simple[:, 0]
 
-            edgeloc = f'{bottom.bbox.position} and {top.bbox.position}'
-            self.v_simple[-1, global_i_slice_b] = match_edges(
-                bottom.v_simple[local_J_b, local_i_slice_b], top.v_simple[local_J_t, local_i_slice_t][::-1], bottom.mrfl, top.mrfl,
-                tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)'
+        if calc_effective:
+            msg = 'zonal boundaries (effective)'
+            self.u_effective[:, 0] = match_edges(
+                self.u_effective[:, 0], self.u_effective[:, -1], self.u_rfl[:, 0], self.u_rfl[:, -1],
+                tolerance=tolerance, verbose=verbose, message=msg
             )
-            self.v_rfl[-1, global_i_slice_b] = max(bottom.mrfl, top.mrfl)
-            self.v_simple[-1, global_i_slice_t] = self.v_simple[-1, global_i_slice_b][::-1]
-            self.v_rfl[-1, global_i_slice_t] = self.v_rfl[-1, global_i_slice_b][::-1]
+            self.u_effective[:, -1] = self.u_effective[:, 0]
 
-            if calc_effective:
-                self.v_effective[-1, global_i_slice_b] = match_edges(
-                    bottom.v_effective[local_J_b, local_i_slice_b], top.v_effective[local_J_t, local_i_slice_t][::-1], bottom.mrfl, top.mrfl,
-                    tolerance=tolerance, verbose=verbose, message=edgeloc+' (effective)'
-                )
-                self.v_effective[-1, global_i_slice_t] = self.v_effective[-1, global_i_slice_b][::-1]
+    def _stitch_fold_n(self, tolerance, calc_effective=False, verbose=False):
+        """
+        Verify and reconcile the folding northern edge
+        """
 
-        # probably don't need this ...
-        if npi%2 != 0:
-            tile = tiles[-1, npi//2]
+        assert self.ni % 2 == 0, "Doing folding northern boundary with an odd nj."
+        ni_mid = self.ni // 2
 
-            I0cg, I1cg = tile.I0cg, tile.I1cg
-            J1cl, I0cl, I1cl = tile.J1cl, tile.I0cl, tile.I1cl
-            nhf = tile.ni // 2
+        msg = 'northern boundary (simple)'
+        self.v_simple[-1, :ni_mid] = match_edges(
+            self.v_simple[-1, :ni_mid], self.v_simple[-1, ni_mid:][::-1], self.v_rfl[-1, :ni_mid], self.v_rfl[-1, ni_mid:][::-1],
+            tolerance=tolerance, verbose=verbose, message=msg
+        )
+        self.v_simple[-1, ni_mid:] = self.v_simple[-1, :ni_mid][::-1]
 
-            edgeloc = f'{tile.bbox.position}'
-            self.v_simple[-1, I0cg:I0cg+nhf] = match_edges(
-                tile.v_simple[J1cl, I0cl:I0cl+nhf], tile.v_simple[J1cl, I0cl+nhf:I1cl][::-1], tile.mrfl, tile.mrfl,
-                tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)'
+        if calc_effective:
+            msg = 'northern boundary (effective)'
+            self.v_effective[-1, :ni_mid] = match_edges(
+                self.v_effective[-1, :ni_mid], self.v_effective[-1, ni_mid:][::-1], self.v_rfl[-1, :ni_mid], self.v_rfl[-1, ni_mid:][::-1],
+                tolerance=tolerance, verbose=verbose, message=msg
             )
-            self.v_simple[-1, I0cg+nhf:I1cg] = self.v_simple[-1, I0cg:I0cg+nhf][::-1]
-            self.v_rfl[-1, I0cg+nhf:I1cg] = tile.mrfl
-            if calc_effective:
-                self.v_effective[-1, I0cg:I0cg+nhf] = match_edges(
-                    tile.v_effective[J1cl, I0cl:I0cl+nhf], tile.v_effective[J1cl, I0cl+nhf:I1cl][::-1], tile.mrfl, tile.mrfl,
-                    tolerance=tolerance, verbose=verbose, message=edgeloc+' (effective)'
-                )
-                self.v_effective[-1, I0cg+nhf:I1cg] = self.v_effective[-1, I0cg:I0cg+nhf][::-1]
+            self.v_effective[-1, ni_mid:] = self.v_effective[-1, :ni_mid][::-1]
 
-    def stitch_subdomains(self, thinwalls_list, tolerance=0, config=CalcConfig(), verbose=True):
-        """"Stitch subdomains
+    def stitch_tiles(self, thinwalls_list, tolerance=0, config=CalcConfig(), verbose=True):
+        """"
+        Stitch all tiles
         """
         npj, npi = self.pelayout.shape
 
@@ -423,126 +417,43 @@ class Domain(ThinWalls.ThinWalls):
             self.u_rfl = numpy.zeros( (self.shape[0],self.shape[1]+1), dtype=numpy.int32 )
             self.v_rfl = numpy.zeros( (self.shape[0]+1,self.shape[1]), dtype=numpy.int32 )
 
-        # Center
+        # Insert all tiles
         for iy in range(npj):
             for ix in range(npi):
-                self._stitch_tile_center( tiles[iy,ix], config=config )
+                self._stitch_tile( tiles[iy,ix], config=config )
 
-        # Outer edges
+        # Reconcile outer edges
         if config.calc_thinwalls:
             for iy in range(npj):
                 for ix in range(npi-1):
                     self._stitch_i( tiles[iy, ix], tiles[iy, ix+1], tolerance, calc_effective=config.calc_effective_tw, verbose=verbose )
-            if self.reentrant_x:
-                for iy in range(npj):
-                    self._stitch_i( tiles[iy, -1], tiles[iy, 0], tolerance, calc_effective=config.calc_effective_tw, verbose=verbose )
             for iy in range(npj-1):
                 for ix in range(npi):
                     self._stitch_j( tiles[iy, ix], tiles[iy+1, ix], tolerance, calc_effective=config.calc_effective_tw, verbose=verbose )
+            if self.reentrant_x:
+                self._stitch_reentrant_x( tolerance=tolerance, calc_effective=config.calc_effective_tw, verbose=verbose )
             if self.fold_n:
-                self._stitch_fold_n( tiles, tolerance=tolerance, calc_effective=config.calc_effective_tw, verbose=verbose )
+                self._stitch_fold_n( tolerance=tolerance, calc_effective=config.calc_effective_tw, verbose=verbose )
 
-    def stitch_mask_domain(self, mask, rec, halo, config=CalcConfig(), tolerance=2, verbose=False):
+    def stitch_mask(self, mask, config=CalcConfig(), tolerance=2, verbose=False):
         """
-        The assumption is the masked domain has the higher refine level
+        Insert mask domain.
+        The assumption is the mask domain has the higher refine level and always replace the old values.
         """
-        jsg, jeg, isg, ieg = rec  # global indices
-        # Cell center sizes
-        nj, ni = jeg-jsg+2*halo, ieg-isg+2*halo
-        jst, jet, ist, iet = halo, nj-halo, halo, ni-halo  # tile indices
-
-        # aliasing
-        dCs, dUs, dVs = self.c_simple, self.u_simple, self.v_simple
-        mCs, mUs, mVs = mask.c_simple, mask.u_simple, mask.v_simple
-        dCr, dUr, dVr = self.c_rfl, self.u_rfl, self.v_rfl
-        mCr, mUr, mVr = mask.c_rfl, mask.u_rfl, mask.v_rfl
-        if config.calc_effective_tw:
-            dCe, dUe, dVe = self.c_effective, self.u_effective, self.v_effective
-            mCe, mUe, mVe = mask.c_effective, mask.u_effective, mask.v_effective
-
-        # assert numpy.all(dCr[jsg:jeg,isg:ieg]<=mCr[jst:jet,ist:iet]), \
-        #     'Mask refinement level lower than parent domain.'
-
-        # middle part
-        dCs[jsg:jeg,isg:ieg] = mCs[jst:jet,ist:iet]
-        dCr[jsg:jeg,isg:ieg] = mCr[jst:jet,ist:iet]
+        self._stitch_tile(mask)
 
         if config.calc_thinwalls:
-            dUs[jsg:jeg,isg+1:ieg] = mUs[jst:jet,ist+1:iet]
-            dUr[jsg:jeg,isg+1:ieg] = mUr[jst:jet,ist+1:iet]
-            dVs[jsg+1:jeg,isg:ieg] = mVs[jst+1:jet,ist:iet]
-            dVr[jsg+1:jeg,isg:ieg] = mVr[jst+1:jet,ist:iet]
+            # Western edge
+            self._stitch_i( self, mask, tolerance=tolerance, calc_effective=False, verbose=verbose )
+            # Eastern edge
+            self._stitch_i( mask, self, tolerance=tolerance, calc_effective=False, verbose=verbose )
+            # Southern edge
+            self._stitch_j( self, mask, tolerance=tolerance, calc_effective=False, verbose=verbose )
+            # Northern edge
+            self._stitch_j( mask, self, tolerance=tolerance, calc_effective=False, verbose=verbose )
 
-            msg = 'NP mask western edge (simple)'
-            dUs[jsg:jeg,isg] = match_edges(dUs[jsg:jeg,isg], mUs[jst:jet,ist],
-                                           dUr[jsg:jeg,isg], mUr[jst:jet,ist],
-                                           tolerance=tolerance, verbose=verbose, message=msg)
-            msg = 'NP mask eastern edge (simple)'
-            dUs[jsg:jeg,ieg] = match_edges(dUs[jsg:jeg,ieg], mUs[jst:jet,iet],
-                                           dUr[jsg:jeg,ieg], mUr[jst:jet,iet],
-                                           tolerance=tolerance, verbose=verbose, message=msg)
-            dUr[jsg:jeg,isg] = numpy.maximum(dUr[jsg:jeg,isg], mUr[jst:jet,ist])
-            dUr[jsg:jeg,ieg] = numpy.maximum(dUr[jsg:jeg,ieg], mUr[jst:jet,iet])
-
-            msg = 'NP mask northern edge (simple)'
-            dVs[jsg,isg:ieg] = match_edges(dVs[jsg,isg:ieg], mVs[jst,ist:iet],
-                                           dVr[jsg,isg:ieg], mVr[jst,ist:iet],
-                                           tolerance=tolerance, verbose=verbose, message=msg)
-            msg = 'NP mask southern edge (simple)'
-            dVs[jeg,isg:ieg] = match_edges(dVs[jeg,isg:ieg], mVs[jet,ist:iet],
-                                           dVr[jeg,isg:ieg], mVr[jet,ist:iet],
-                                           tolerance=tolerance, verbose=verbose, message=msg)
-            dVr[jsg,isg:ieg] = numpy.maximum(dVr[jsg,isg:ieg], mVr[jst,ist:iet])
-            dVr[jeg,isg:ieg] = numpy.maximum(dVr[jeg,isg:ieg], mVr[jet,ist:iet])
-
-            if config.calc_effective_tw:
-                dCe[jsg:jeg,isg:ieg] = mCe[jst:jet,ist:iet]
-                dUe[jsg:jeg,isg+1:ieg] = mUe[jst:jet,ist+1:iet]
-                dVe[jsg+1:jeg,isg:ieg] = mVe[jst+1:jet,ist:iet]
-
-                msg = 'NP mask W edge (effective)'
-                dUe[jsg:jeg,isg] = match_edges(dUe[jsg:jeg,isg], mUe[jst:jet,ist],
-                                                dUr[jsg:jeg,isg], mUr[jst:jet,ist],
-                                               tolerance=tolerance, verbose=verbose, message=msg)
-                msg = 'NP mask E edge (effective)'
-                dUe[jsg:jeg,ieg] = match_edges(dUe[jsg:jeg,ieg], mUe[jst:jet,iet],
-                                               dUr[jsg:jeg,ieg], mUr[jst:jet,iet],
-                                               tolerance=tolerance, verbose=verbose, message=msg)
-                msg = 'NP mask N edge (effective)'
-                dVe[jsg,isg:ieg] = match_edges(dVe[jsg,isg:ieg], mVe[jst,ist:iet],
-                                               dVr[jsg,isg:ieg], mVr[jst,ist:iet],
-                                               tolerance=tolerance, verbose=verbose, message=msg)
-                msg = 'NP mask S edge (effective)'
-                dVe[jeg,isg:ieg] = match_edges(dVe[jeg,isg:ieg], mVe[jet,ist:iet],
-                                               dVr[jeg,isg:ieg], mVr[jet,ist:iet],
-                                               tolerance=tolerance, verbose=verbose, message=msg)
-
-        if config.calc_roughness:
-            self.roughness[jsg:jeg,isg:ieg] = mask.roughness[jst:jet,ist:iet]
-        if config.calc_gradient:
-            self.gradient[jsg:jeg,isg:ieg] = mask.gradient[jst:jet,ist:iet]
-
-    def stitch_mask_fold_north(self, do_effective=False, tolerance=2, verbose=False):
-        if not self.fold_n:
-            return
-        _, _, isw, iew = self.north_mask[0]
-        _, _, ise, iee = self.north_mask[1]
-
-        Vs, Vr = self.v_simple, self.v_rfl
-        if do_effective: Ve = self.v_effective
-
-        msg = 'northern boundary (simple)'
-        Vs[-1,isw:iew] = match_edges(Vs[-1,isw:iew], Vs[-1,iee-1:ise-1:-1],
-                                     Vr[-1,isw:iew], Vr[-1,iee-1:ise-1:-1],
-                                     tolerance=tolerance, verbose=verbose, message=msg)
-        Vr[-1,isw:iew] = numpy.maximum(Vr[-1,isw:iew], Vr[-1,iee-1:ise-1:-1])
-        Vs[-1,iee-1:ise-1:-1], Vr[-1,iee-1:ise-1:-1] = Vs[-1,isw:iew], Vr[-1,isw:iew]
-        if do_effective:
-            msg = 'northern boundary (effective)'
-            Ve[-1,isw:iew] = match_edges(Ve[-1,isw:iew], Ve[-1,iee-1:ise-1:-1],
-                                         Vr[-1,isw:iew], Vr[-1,iee-1:ise-1:-1],
-                                         tolerance=tolerance, verbose=verbose, message=msg)
-            Ve[-1,iee-1:ise-1:-1] = Ve[-1,isw:iew]
+            if self.fold_n:
+                self._stitch_fold_n( tolerance=tolerance, calc_effective=False, verbose=verbose )
 
     def regrid_topography(self, pelayout=None, tgt_halo=0, nprocs=1, eds=None, src_halo=0,
                           refine_loop_args={}, calc_args={}, hitmap=None, bnd_tol_level=1, verbose=False):

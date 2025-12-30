@@ -5,7 +5,8 @@ import netCDF4
 from ptopo.external.thinwall.python import GMesh
 from ptopo.regrid.kernel import HitMap, TimeLog, CalcConfig, RefineConfig, topo_gen_mp, topo_gen
 from ptopo.regrid.output_utils import write_output, write_hitmap
-from ptopo.regrid.topo_regrid import Domain, NorthPoleMask
+from ptopo.regrid.topo_regrid import Domain
+from ptopo.regrid.domain_mask import NorthPoleMask
 
 def add_regrid_parser(subparsers):
     parser = subparsers.add_parser(
@@ -17,24 +18,24 @@ def add_regrid_parser(subparsers):
     parser.add_argument("--verbosity", default=0, help='Granularity of log output')
 
     parser_tgt = parser.add_argument_group('Target grid')
-    parser_tgt.add_argument("--target_grid", default='', help='File name of the target grid')
-    parser_tgt.add_argument("--lon_tgt", default='x', help='Field name in target grid file for longitude')
-    parser_tgt.add_argument("--lat_tgt", default='y', help='Field name in target grid file for latitude')
+    parser_tgt.add_argument("--target-grid", default='', help='File name of the target grid')
+    parser_tgt.add_argument("--lon-tgt", default='x', help='Field name in target grid file for longitude')
+    parser_tgt.add_argument("--lat-tgt", default='y', help='Field name in target grid file for latitude')
     parser_tgt.add_argument("--non-supergrid", action='store_true',
                             help='If specified, the target grid file is not on a supergrid. Currently not supported')
-    parser_tgt.add_argument("--mono_lon", action='store_true',
+    parser_tgt.add_argument("--mono-lon", action='store_true',
                             help='If specified, a 360-degree shift will be made to guarantee the last row of lon is monotonic.')
-    parser_tgt.add_argument("--tgt_halo", default=0, type=int, help='Halo size at both directions for target grid subdomain')
-    parser_tgt.add_argument("--tgt_regional", action='store_true', help='If true, target grid is regional rather than global.')
+    parser_tgt.add_argument("--tgt-halo", default=0, type=int, help='Halo size at both directions for target grid subdomain')
+    parser_tgt.add_argument("--tgt-regional", action='store_true', help='If true, target grid is regional rather than global.')
 
     parser_src = parser.add_argument_group('Source data')
     parser_src.add_argument("--source", default='', help='File name of the source data')
-    parser_src.add_argument("--coord_source", default='', help='File name of the source coordinate (can be different from source)')
-    parser_src.add_argument("--lon_src", default='lon', help='Field name in source file for longitude')
-    parser_src.add_argument("--lat_src", default='lat', help='Field name in source file for latitude')
-    parser_src.add_argument("--src_halo", default=0, type=int, help='Halo size of at both directions for subsetting source data')
+    parser_src.add_argument("--coord-source", default='', help='File name of the source coordinate (can be different from source)')
+    parser_src.add_argument("--lon-src", default='lon', help='Field name in source file for longitude')
+    parser_src.add_argument("--lat-src", default='lat', help='Field name in source file for latitude')
+    parser_src.add_argument("--src-halo", default=0, type=int, help='Halo size of at both directions for subsetting source data')
     parser_src.add_argument("--elev", default='elevation', help='Field name in source file for elevation')
-    parser_src.add_argument("--remove_src_repeat_lon", action='store_true',
+    parser_src.add_argument("--remove-src-repeat-lon", action='store_true',
                             help=('If specified, the repeating longitude in the last column is removed. '
                                   'Elevation along that longitude will be the mean.'))
 
@@ -73,6 +74,7 @@ def add_regrid_parser(subparsers):
 
 def regrid(args):
     clock = TimeLog(['Read source', 'Read target', 'Setup', 'Regrid main', 'Regrid masked', 'Write output'])
+
     # Read source data
     print('Reading source data from ', args.source)
     if args.verbose:
@@ -154,7 +156,7 @@ def regrid(args):
     # Create the target grid domain
     # dm = Domain(lon=lonb_tgt, lat=latb_tgt, Idx=Idx, Idy=Idy, reentrant_x=tgt_reentrant_x,
     #             fold_n=tgt_fold_n, num_north_pole=2, pole_radius=refine_config.singularity_radius)
-    dm = Domain(lon=lonb_tgt, lat=latb_tgt, Idx=Idx, Idy=Idy, reentrant_x=tgt_reentrant_x, fold_n=tgt_fold_n)
+    dm = Domain(lon=lonb_tgt, lat=latb_tgt, Idx=Idx, Idy=Idy, reentrant_x=tgt_reentrant_x, fold_n=tgt_fold_n, eds=eds)
     if args.save_hits:
         hm = HitMap(lon=lon_src, lat=lat_src, from_cell_center=True)
     else:
@@ -171,7 +173,7 @@ def regrid(args):
     # dm.regrid_topography(pelayout=pe, tgt_halo=args.tgt_halo, nprocs=nprocs, eds=eds, src_halo=args.src_halo,
     #                      refine_loop_args=refine_options, calc_args=calc_args, hitmap=hm,
     #                      bnd_tol_level=bnd_tol_level, verbose=args.verbose)
-    subdomains = dm.create_subdomains(pelayout=pe, tgt_halo=args.tgt_halo, eds=eds, subset_eds=True, src_halo=args.src_halo,
+    subdomains = dm.make_tiles(pelayout=pe, tgt_halo=args.tgt_halo, subset_eds=True, src_halo=args.src_halo,
                                       verbose=False)
     # clock.delta('Domain decomposition')
 
@@ -185,7 +187,7 @@ def regrid(args):
         twlist, hitlist = zip(*twlist)
         hm.stitch_hits(hitlist)
 
-    dm.stitch_subdomains([tw['tw'] for tw in twlist], tolerance=bnd_tol_level, config=calc_config, verbose=args.verbose)
+    dm.stitch_tiles([tw['tw'] for tw in twlist], tolerance=bnd_tol_level, config=calc_config, verbose=args.verbose)
 
     clock.delta('Regrid main')
     if args.fixed_refine_level<0:
