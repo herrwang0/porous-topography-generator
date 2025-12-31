@@ -1,9 +1,10 @@
-import numpy
+import numpy as np
 import time
 from ptopo.external.thinwall.python import GMesh
 from ptopo.external.thinwall.python import ThinWalls
 from .roughness import subgrid_roughness_gradient
-from .configs import CalcConfig, TileConfig, RefineConfig
+from .configs import CalcConfig, TileConfig, RefineConfig, NorthPoleConfig
+from .domain_mask import NorthPoleMask
 
 import multiprocessing
 import functools
@@ -40,7 +41,7 @@ class HitMap(GMesh.GMesh):
     def __init__(self, *args, **kwargs):
         """"""
         super().__init__(*args, **kwargs)
-        self._hits = numpy.zeros( self.shape )
+        self._hits = np.zeros( self.shape )
         self._box = (0, self.shape[0], 0, self.shape[1])
     def __getitem__(self, key):
         return self._hits[key]
@@ -66,12 +67,12 @@ class HitMap(GMesh.GMesh):
                 self[jst:jed, ist:] += hits[:,:-ied]
     def check_lat(self):
         """Checks if all points at each latitude are hit."""
-        return numpy.all(self[:,:], axis=1)
+        return np.all(self[:,:], axis=1)
     def pcolormesh(self, axis, **kwargs):
         """Plots hit map"""
         return axis.pcolormesh( self.lon, self.lat, self[:,:], **kwargs )
 
-def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), verbose=True, timers=False):
+def topo_gen(grid, config=CalcConfig(), refine_cfg=RefineConfig(), verbose=True, timers=False):
     """The main function for generating topography
 
     Parameters
@@ -89,29 +90,29 @@ def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), verbose=Tr
     if verbose:
         print('topo_gen() for domain {:}'.format(grid.bbox.position))
 
-    if (not refine_config.use_center) and (config.calc_roughness or config.calc_gradient):
+    if (not refine_cfg.use_center) and (config.calc_roughness or config.calc_gradient):
         raise Exception('"use_center" needs to be used for roughness or gradient')
     if timers: clock.delta('setup topo_gen')
 
     # Step 1: Refine grid
-    levels = grid.refine_loop(grid.eds, verbose=True, timers=False, mask_res=grid.mask_res, **refine_config.to_kwargs())
+    levels = grid.refine_loop(grid.eds, verbose=True, timers=False, mask_res=grid.mask_res, **refine_cfg.to_kwargs())
     nrfl = levels[-1].rfl
     if timers: clock.delta('refine grid')
 
     # Step 2: Project elevation to the finest grid
     levels[-1].project_source_data_onto_target_mesh(
-        grid.eds, use_center=refine_config.use_center, work_in_3d=refine_config.work_in_3d
+        grid.eds, use_center=refine_cfg.use_center, work_in_3d=refine_cfg.work_in_3d
     )
     if config.save_hits:
         lon_src, lat_src = grid.eds.lon_coord, grid.eds.lat_coord
         hits = HitMap(shape=(lat_src.size, lon_src.size))
-        hits[:] = levels[-1].source_hits(grid.eds, use_center=refine_config.use_center, singularity_radius=0.0)
+        hits[:] = levels[-1].source_hits(grid.eds, use_center=refine_cfg.use_center, singularity_radius=0.0)
         hits.box = (lat_src.start, lat_src.stop, lon_src.start, lon_src.stop)
     if timers: clock.delta('assign data')
 
     # Step 2: Create a ThinWalls object on the finest grid and coarsen back
     tw = ThinWalls.ThinWalls(lon=levels[-1].lon, lat=levels[-1].lat, rfl=levels[-1].rfl)
-    if refine_config.use_center:
+    if refine_cfg.use_center:
         tw.set_cell_mean(levels[-1].height)
         if config.calc_thinwalls:
             tw.set_edge_to_step(config.thinwalls_interp)
@@ -154,57 +155,79 @@ def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), verbose=Tr
         tw = tw.coarsen(do_thinwalls=config.calc_thinwalls, do_effective=config.calc_effective_tw)
         if verbose: print('Refine level {:} {:}'.format(tw.rfl, tw))
         if timers: clock.delta('refine loop (coarsen grid)')
+    grid.update_thinwalls_arrays(tw)
     if timers: clock.delta('refine loop (total)', ref_time=loop_start)
 
     out = subgrid_roughness_gradient(
-        levels, tw.c_simple.ave, do_roughness=config.calc_roughness, do_gradient=config.calc_gradient,
+        levels, grid.c_simple.ave, do_roughness=config.calc_roughness, do_gradient=config.calc_gradient,
         Idx=grid.Idx, Idy=grid.Idy
     )
-    tw.roughness, tw.gradient = out['h2'], out['gh']
+    grid.roughness, grid.gradient = out['h2'], out['gh']
     if timers: clock.delta("roughness/gradient")
 
-    # Step 3: Decorate the coarsened ThinWalls object
-    tw.bbox = grid.bbox
-    tw.mrfl = nrfl
+    # Step 3: Update refinement levels
+    grid.c_rfl[:] = nrfl
+    if config.calc_thinwalls:
+        grid.u_rfl[:] = nrfl
+        grid.v_rfl[:] = nrfl
 
     if timers:
         clock.delta('total')
         clock.print()
 
     out = dict.fromkeys(['tw', 'hits'])
-    out['tw'] = tw
+    out['tw'] = grid
     if config.save_hits: out['hits'] = hits
     return out
 
-def topo_gen_tiles(domain, hm=None, tile_config=TileConfig(), calc_config=CalcConfig(), refine_config=RefineConfig(),
+def topo_gen_tiles(domain, hm=None, tile_cfg=TileConfig(), calc_cfg=CalcConfig(), refine_cfg=RefineConfig(),
                    verbose=False):
     """
     A wrapper function of tiling and topo_gen
     """
     tiles = domain.make_tiles(
-        config=tile_config, verbose=verbose
+        config=tile_cfg, verbose=verbose
     )
 
     twlist, hitlist = [], []
     for tile in tiles.flatten():
         out = topo_gen(
-            tile, config=calc_config, refine_config=refine_config, verbose=verbose, timers=True,
+            tile, config=calc_cfg, refine_cfg=refine_cfg, verbose=verbose, timers=True,
         )
         twlist.append( out['tw'] )
         hitlist.append( out['hits'] )
 
-    domain.stitch_tiles(twlist, tolerance=tile_config.bnd_tol_level, config=calc_config, verbose=verbose)
+    domain.stitch_tiles(twlist, tolerance=tile_cfg.bnd_tol_level, config=calc_cfg, verbose=verbose)
 
-    if hm and calc_config.save_hits:
+    if hm and calc_cfg.save_hits:
         hm.stitch_hits(hitlist)
 
-def topo_gen_mp(domain_list, nprocs=None, config=CalcConfig(), refine_config=RefineConfig(), verbose=False, timers=False):
+def topo_gen_mp(domain_list, nprocs=None, config=CalcConfig(), refine_cfg=RefineConfig(), verbose=False, timers=False):
     """A wrapper for multiprocessing topo_gen"""
     if nprocs is None:
         nprocs = len(domain_list)
     pool = multiprocessing.Pool(processes=nprocs)
-    tw_list = pool.map(functools.partial(topo_gen, verbose=verbose, timers=timers, config=config, refine_config=refine_config), domain_list)
+    tw_list = pool.map(functools.partial(topo_gen, verbose=verbose, timers=timers, config=config, refine_cfg=refine_cfg), domain_list)
     pool.close()
     pool.join()
 
     return tw_list
+
+def progress_north_pole_ring(
+        domain, hm, init_masks,
+        np_cfg=NorthPoleConfig(), calc_cfg=CalcConfig(), refine_cfg=RefineConfig(), tile_cfg=TileConfig(),
+        verbose=False
+    ):
+    outer_rings = init_masks
+    start, stop, step = np_cfg.lat_start, np_cfg.lat_stop, np_cfg.lat_step
+    for ring_lat in np.arange( start + step, stop + step, step):
+        inner_rings = NorthPoleMask(domain, counts=2, radius=90 - ring_lat)
+        for outer, inner in zip(outer_rings, inner_rings):
+            mask_domain = domain.make_subdomain(
+                bbox=outer.with_halo(halo=np_cfg.pole_halo), norm_lon=True, global_masks=[ inner.to_box() ], subset_eds=False
+            )
+            topo_gen_tiles(mask_domain, hm, tile_cfg=tile_cfg, calc_cfg=calc_cfg, refine_cfg=refine_cfg, verbose=verbose)
+
+            domain.stitch_mask(mask_domain)
+        outer_rings = inner_rings
+        domain.stitch_fold_n( tolerance=tile_cfg.bnd_tol_level, calc_effective=calc_cfg.calc_effective_tw, verbose=verbose )
