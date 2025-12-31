@@ -87,6 +87,7 @@ def regrid(args):
     # ============================================================
     # Read source data
     # ============================================================
+    print('\n')
     print('Reading source data from ', args.source)
     if args.verbose:
         print(  "'"+args.lon_src+"'", '-> lon_src')
@@ -107,6 +108,7 @@ def regrid(args):
     # Read target grid
     # ============================================================
     if args.non_supergrid: raise Exception('Only supergrid is supported.')
+    print('\n')
     print('Reading target grid from ', args.target_grid)
     if args.verbose:
         print(  "'"+args.lon_tgt+"'[::2, ::2]", '-> lonb_tgt')
@@ -144,6 +146,7 @@ def regrid(args):
         calc_roughness=args.do_roughness, calc_gradient=args.do_gradient, save_hits=args.save_hits
     )
     if args.verbose:
+        print('\n')
         calc_cfg.print_options()
 
     # Regridding and topo_gen options
@@ -160,6 +163,7 @@ def regrid(args):
         max_mb=args.max_mb
     )
     if args.verbose:
+        print('\n')
         refine_cfg.print_options()
 
     # Domain decomposition
@@ -172,6 +176,7 @@ def regrid(args):
         pelayout=args.pe, tgt_halo=args.tgt_halo, norm_lon=True, subset_eds=True, src_halo=args.src_halo, bnd_tol_level=bnd_tol_level
     )
     if args.verbose:
+        print('\n')
         tile_cfg.print_options()
 
     # North Pole options
@@ -200,6 +205,7 @@ def regrid(args):
                 )
             )
         if args.verbose:
+            print('\n')
             np_cfg.print_options()
 
     # ============================================================
@@ -218,6 +224,9 @@ def regrid(args):
         lon=lonb_tgt, lat=latb_tgt, Idx=Idx, Idy=Idy,
         reentrant_x=tgt_reentrant_x, fold_n=tgt_fold_n, mask_res=mask_res, eds=eds
     )
+    if args.verbose:
+        print('\n', domain.format())
+
     if calc_cfg.save_hits:
         hm = HitMap(lon=lon_src, lat=lat_src, from_cell_center=True)
     else:

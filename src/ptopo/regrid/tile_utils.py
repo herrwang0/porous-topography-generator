@@ -58,6 +58,11 @@ class BoundaryBox:
         )
 
     def __str__(self):
+        return self.format(indent=0)
+
+    def format(self, indent=0):
+        pad = " " * indent
+
         # alias
         gj0, gj1 = self.jdg_slice.start, self.jdg_slice.stop
         gi0, gi1 = self.idg_slice.start, self.idg_slice.stop
@@ -67,12 +72,12 @@ class BoundaryBox:
 
         # Construct lines
         disp = [
-            str(type(self)),
-            f"  position = {pos}",
-            f"  global computer domain: ",
-            f"     (nj, ni) = ({self.nj}, {self.ni}), (j0, j1, i0, i1) = ({self.j0}, {self.j1}, {self.i0}, {self.i1})",
-            f"  global data domain: ",
-            f"     (nj, ni) = ({self.data_nj}, {self.data_ni}), (j0, j1, i0, i1) = ({gj0}, {gj1}, {gi0}, {gi1})"
+            f"{pad}"+str(type(self)),
+            f"{pad}  position = {pos}",
+            f"{pad}  global computation domain: ",
+            f"{pad}     (nj, ni) = ({self.nj}, {self.ni}), (j0, j1, i0, i1) = ({self.j0}, {self.j1}, {self.i0}, {self.i1})",
+            f"{pad}  global data domain: ",
+            f"{pad}     (nj, ni) = ({self.data_nj}, {self.data_ni}), (j0, j1, i0, i1) = ({gj0}, {gj1}, {gi0}, {gi1})"
         ]
         return '\n'.join(disp)
 

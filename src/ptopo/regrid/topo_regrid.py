@@ -6,7 +6,12 @@ from .tile_utils import slice_array, decompose_domain, normalize_longitude, box_
 from .configs import CalcConfig, TileConfig
 
 class Domain(ThinWalls.ThinWalls):
-    """A container for regridded topography
+    """
+    A wrapper of ThinWalls object for tiling
+
+    1) Attributes Idx, Idy : inverse of v, u point spacing
+    2) Attributes [cuv]_rfl : refine level arrays for center, u, v points
+    3) Methods for creating a subdomain, generating/stitching back tiles and sporing a mask domain
     """
     def __init__(self, lon=None, lat=None, Idx=None, Idy=None, is_geo_coord=True,
                  reentrant_x=False, fold_n=False, bbox=None, mask_res=[],
@@ -17,7 +22,7 @@ class Domain(ThinWalls.ThinWalls):
         lon, lat : float
             Cell corner coordinates to construct ThinWalls
         Idx, Idy : float, optional
-            v and u point grid spacing, used for calculating gradient.
+            The inverse of v and u point grid spacing, used for calculating gradient.
         is_geo_coord : bool, optional
             If False, lon/lat are not geographic coordinates. Default is True.
         reentrant_x : bool, optional
@@ -28,6 +33,8 @@ class Domain(ThinWalls.ThinWalls):
             Default is False.
         bbox : BoundaryBox, optional
             BoundaryBox that includes indexing information
+        mask_res : list, optional
+            List of rectangles to exclude regions to calculate resolution limit
         eds : GMesh.UniformEDS objects, optional
             Contains source coordinates and data.
         subset_eds : bool, optional
@@ -50,13 +57,18 @@ class Domain(ThinWalls.ThinWalls):
         self.reentrant_x = reentrant_x
         self.fold_n = fold_n
         if self.fold_n:
-            assert self.ni%2==0, 'An odd number ni does not work with bi-polar cap.'
+            assert self.ni % 2 == 0, 'An odd number ni does not work with bi-polar cap.'
 
         self.mask_res = mask_res
 
         if eds: self._fit_src_coords(eds, subset_eds=subset_eds, halo=src_halo)
 
     def __str__(self):
+        return self.format(indent=0)
+
+    def format(self, indent=0):
+        pad = " " * indent
+
         if self.is_geo_coord:
             coord_name = 'lat lon'
             lonmin, lonmax = np.mod(self.lon.min(), 360), np.mod(self.lon.max(), 360)
@@ -65,17 +77,23 @@ class Domain(ThinWalls.ThinWalls):
             coord_name = 'y x'
             lonmin, lonmax = self.lon.min(), self.lon.max()
             src_lonmin, src_lonmax = self.eds.lon_coord.bounds[0], self.eds.lon_coord.bounds[-1]
+
         disp = [
-            str(type(self)),
-            str(self.bbox),
-            f'Geographic coordinate? {self.is_geo_coord}',
-            f'Domain size (nj ni): ({self.nj}, {self.ni})',
-            f'Domain range ({coord_name}): [{self.lat.min():10.6f}, {self.lat.max():10.6f}], [{lonmin:10.6f}, {lonmax:10.6f}]'
-            f'Source grid size (nj ni): ({self.eds.nj:9d}, {self.eds.ni:9d}) ' + \
-            f'indices: {(self.eds.lat_coord.start, self.eds.lat_coord.stop, self.eds.lon_coord.start, self.eds.lon_coord.stop)}',
-            f'Source grid range ({coord_name}): [{self.eds.lat_coord.bounds[0]:10.6f}, {self.eds.lat_coord.bounds[-1]:10.6f}], [{src_lonmin:10.6f}, {src_lonmax:10.6f}]'
+            f'{pad}' + str(type(self)),
+            self.bbox.format(indent=indent + 2),
+            f'{pad}  Geographic coordinate? {self.is_geo_coord}',
+            f'{pad}  Domain size (nj ni): ({self.nj}, {self.ni})',
+            f'{pad}  Domain range ({coord_name}): [{self.lat.min():10.6f}, {self.lat.max():10.6f}], [{lonmin:10.6f}, {lonmax:10.6f}]',
+            f'{pad}  Source grid size (nj ni): ({self.eds.nj:9d}, {self.eds.ni:9d}) ' + \
+            f'{pad}  indices: {(self.eds.lat_coord.start, self.eds.lat_coord.stop, self.eds.lon_coord.start, self.eds.lon_coord.stop)}',
+            f'{pad}  Source grid range ({coord_name}): [{self.eds.lat_coord.bounds[0]:10.6f}, {self.eds.lat_coord.bounds[-1]:10.6f}], [{src_lonmin:10.6f}, {src_lonmax:10.6f}]'
         ]
-        if hasattr(self, 'north_mask'): disp.append(str(self.north_mask))
+
+        if len(self.mask_res)>0:
+            disp.append(f'{pad}  Mask rectangles')
+            for box in self.mask_res:
+                disp.append(f'{pad}    js,je,is,ie: {box[0]}, {box[1]}, {box[2]}, {box[3]}, shape: ({box[1]-box[0]}, {box[3]-box[2]})')
+
         return '\n'.join(disp)
 
     def _fit_src_coords(self, eds, subset_eds=True, halo=0):
@@ -214,37 +232,6 @@ class Domain(ThinWalls.ThinWalls):
                 if verbose:
                     print(chunks[pe_j, pe_i], '\n')
         return chunks
-
-    # def create_mask_domain(self, mask, tgt_halo=0, norm_lon=True, pole_radius=0.25):
-    #     """Creates a domain for the masked north pole region
-
-    #     Parameters
-    #     ----------
-    #     mask : tuple
-    #         Tuple of mask rectangle indices
-    #     tgt_halo : int, optional
-    #         Halo size
-    #     pole_radius : float, optional
-    #         Polar radius in the new mask domain
-    #     Returns
-    #     ----------
-    #     Output : Domain object
-    #     """
-    #     jst, jed, ist, ied = mask
-    #     mask_halo = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
-    #     lon = slice_array(self.lon, box=mask_halo, cyclic_zonal=False, fold_north=True)
-    #     lat = slice_array(self.lat, box=mask_halo, cyclic_zonal=False, fold_north=True)
-    #     if norm_lon: lon = normalize_longitude(lon, lat)
-
-    #     Idx, Idy = None, None
-    #     if self.Idx is not None:
-    #         Idx = slice_array(self.Idx, box=mask_halo, position='center',
-    #                           cyclic_zonal=False, fold_north=True)
-    #     if self.Idy is not None:
-    #         Idy = slice_array(self.Idy, box=mask_halo, position='center',
-    #                           cyclic_zonal=False, fold_north=True)
-
-    #     return Domain(lon=lon, lat=lat, Idx=Idx, Idy=Idy, reentrant_x=False, num_north_pole=1, pole_radius=pole_radius)
 
     def _stitch_tile(self, tile, config):
         """
