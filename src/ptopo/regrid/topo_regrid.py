@@ -1,8 +1,6 @@
-import sys
-import numpy
+import numpy as np
 import warnings
 
-from ptopo.external.thinwall.python import GMesh
 from ptopo.external.thinwall.python import ThinWalls
 from .tile_utils import slice_array, decompose_domain, normalize_longitude, box_halo, BoundaryBox, reverse_slice
 from .configs import CalcConfig, TileConfig
@@ -39,9 +37,9 @@ class Domain(ThinWalls.ThinWalls):
         """
         super().__init__(lon=lon, lat=lat, is_geo_coord=is_geo_coord)
         self.Idx, self.Idy = Idx, Idy
-        self.c_rfl = numpy.zeros( self.shape, dtype=numpy.int32 )
-        self.u_rfl = numpy.zeros( (self.nj, self.ni + 1), dtype=numpy.int32 )
-        self.v_rfl = numpy.zeros( (self.nj + 1, self.ni), dtype=numpy.int32 )
+        self.c_rfl = np.zeros( self.shape, dtype=np.int32 )
+        self.u_rfl = np.zeros( (self.nj, self.ni + 1), dtype=np.int32 )
+        self.v_rfl = np.zeros( (self.nj + 1, self.ni), dtype=np.int32 )
 
         if bbox:
             assert (self.nj == bbox.data_nj) and (self.ni == bbox.data_ni), f'bbox incorrect {self.nj}!= {bbox.nj}, {self.ni}!= {bbox.ni}'
@@ -61,8 +59,8 @@ class Domain(ThinWalls.ThinWalls):
     def __str__(self):
         if self.is_geo_coord:
             coord_name = 'lat lon'
-            lonmin, lonmax = numpy.mod(self.lon.min(), 360), numpy.mod(self.lon.max(), 360)
-            src_lonmin, src_lonmax = numpy.mod(self.eds.lon_coord.bounds[0], 360), numpy.mod(self.eds.lon_coord.bounds[-1], 360)
+            lonmin, lonmax = np.mod(self.lon.min(), 360), np.mod(self.lon.max(), 360)
+            src_lonmin, src_lonmax = np.mod(self.eds.lon_coord.bounds[0], 360), np.mod(self.eds.lon_coord.bounds[-1], 360)
         else:
             coord_name = 'y x'
             lonmin, lonmax = self.lon.min(), self.lon.max()
@@ -202,8 +200,8 @@ class Domain(ThinWalls.ThinWalls):
             print('  j: ', j_domain)
             print('\n')
 
-        chunks = numpy.empty( (j_domain.size, i_domain.size), dtype=object )
-        self.pelayout = numpy.empty( (j_domain.size, i_domain.size), dtype=object )
+        chunks = np.empty( (j_domain.size, i_domain.size), dtype=object )
+        self.pelayout = np.empty( (j_domain.size, i_domain.size), dtype=object )
         for pe_j, (jst, jed) in enumerate(j_domain):
             for pe_i, (ist, ied) in enumerate(i_domain):
                 self.pelayout[pe_j, pe_i] = ((jst, jed, ist, ied), config.tgt_halo) # indices for cell centers
@@ -317,7 +315,7 @@ class Domain(ThinWalls.ThinWalls):
             left.u_simple[local_j_slice_l, local_I_l], right.u_simple[local_j_slice_r, local_I_r], rfl_l, rfl_r,
             tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)'
         )
-        self.u_rfl[global_j_slice, global_I] = numpy.maximum(rfl_l, rfl_r)
+        self.u_rfl[global_j_slice, global_I] = np.maximum(rfl_l, rfl_r)
 
         if calc_effective:
             self.u_effective[global_j_slice, global_I] = match_edges(
@@ -365,7 +363,7 @@ class Domain(ThinWalls.ThinWalls):
             bottom.v_simple[local_J_b, local_i_slice_b], top.v_simple[local_J_t, local_i_slice_t], rfl_b, rfl_t,
             tolerance=tolerance, verbose=verbose, message=edgeloc+' (simple)'
         )
-        self.v_rfl[global_J, global_i_slice] = numpy.maximum(rfl_b, rfl_t)
+        self.v_rfl[global_J, global_i_slice] = np.maximum(rfl_b, rfl_t)
 
         if calc_effective:
             self.v_effective[global_J, global_i_slice] = match_edges(
@@ -422,13 +420,13 @@ class Domain(ThinWalls.ThinWalls):
         """
         npj, npi = self.pelayout.shape
 
-        # Put the list of ThinWalls on a 2D array to utilize numpy array's slicing
-        tiles = numpy.empty( (npj, npi), dtype=object )
+        # Put the list of ThinWalls on a 2D array to utilize np array's slicing
+        tiles = np.empty( (npj, npi), dtype=object )
         for tw in thinwalls_list:
             tiles[tw.bbox.position] = tw
 
-        if config.calc_roughness: self.roughness = numpy.zeros( self.shape )
-        if config.calc_gradient: self.gradient = numpy.zeros( self.shape )
+        if config.calc_roughness: self.roughness = np.zeros( self.shape )
+        if config.calc_gradient: self.gradient = np.zeros( self.shape )
 
         # Insert all tiles
         for iy in range(npj):
@@ -537,27 +535,27 @@ def match_edges(edge1, edge2, rfl1, rfl2, tolerance=0, verbose=True, message='')
     ndiff_low = (edge1.hgh!=edge2.hgh).sum()
 
     str_diff = '[hgh: {:4d}, ave: {:4d}, low: {:4d}]'.format(ndiff_hgh, ndiff_ave, ndiff_low)
-    if numpy.array(rfl1).size==1 and numpy.array(rfl2).size==1:
+    if np.array(rfl1).size==1 and np.array(rfl2).size==1:
         str_rfls = '[rfl={:2d} vs rfl={:2d}]'.format(rfl1, rfl2)
     else:
         str_rfls = ''
     msg = ' '.join(['Edges differ', str_diff, ':', message, str_rfls])+'. '
 
-    if numpy.array(rfl1).size==1:
-        rfl1 = numpy.ones_like(edge1.hgh) * rfl1
-    if numpy.array(rfl2).size==1:
-        rfl2 = numpy.ones_like(edge2.hgh) * rfl2
+    if np.array(rfl1).size==1:
+        rfl1 = np.ones_like(edge1.hgh) * rfl1
+    if np.array(rfl2).size==1:
+        rfl2 = np.ones_like(edge2.hgh) * rfl2
 
     if ndiff_hgh+ndiff_ave+ndiff_low!=0:
         if tolerance==0:
             raise Exception(msg)
-        if numpy.any(rfl1!=rfl2):
+        if np.any(rfl1!=rfl2):
             if verbose:
                 print(msg+'Use higher rfl')
             edge = ThinWalls.StatsBase(edge1.shape)
-            edge.low = numpy.where(rfl1>rfl2, edge1.low, edge2.low)
-            edge.ave = numpy.where(rfl1>rfl2, edge1.ave, edge2.ave)
-            edge.hgh = numpy.where(rfl1>rfl2, edge1.hgh, edge2.hgh)
+            edge.low = np.where(rfl1>rfl2, edge1.low, edge2.low)
+            edge.ave = np.where(rfl1>rfl2, edge1.ave, edge2.ave)
+            edge.hgh = np.where(rfl1>rfl2, edge1.hgh, edge2.hgh)
             return edge
         else:
             if tolerance==1:
@@ -565,11 +563,11 @@ def match_edges(edge1, edge2, rfl1, rfl2, tolerance=0, verbose=True, message='')
             if verbose:
                 print(msg+'Use shallower depth')
             edge = ThinWalls.StatsBase(edge1.shape)
-            edge.low = numpy.maximum(edge1.low, edge2.low)
-            edge.ave = numpy.maximum(numpy.maximum(edge1.ave, edge2.ave), edge.low)
-            edge.hgh = numpy.maximum(numpy.maximum(edge1.hgh, edge2.hgh), edge.ave)
+            edge.low = np.maximum(edge1.low, edge2.low)
+            edge.ave = np.maximum(np.maximum(edge1.ave, edge2.ave), edge.low)
+            edge.hgh = np.maximum(np.maximum(edge1.hgh, edge2.hgh), edge.ave)
             return edge
     else:
-        if numpy.any(rfl1!=rfl2) and verbose: # This should hardly happen.
+        if np.any(rfl1!=rfl2) and verbose: # This should hardly happen.
             print(message+' have the same edge but different refinement levels '+str_rfls+'.')
         return edge1
