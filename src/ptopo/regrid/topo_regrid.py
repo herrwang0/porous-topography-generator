@@ -463,47 +463,6 @@ class Domain(ThinWalls.ThinWalls):
             # Northern edge
             self._stitch_j( mask, self, tolerance=tolerance, calc_effective=False, verbose=verbose )
 
-    def regrid_topography(self, pelayout=None, tgt_halo=0, nprocs=1, eds=None, src_halo=0,
-                          refine_loop_args={}, calc_args={}, hitmap=None, bnd_tol_level=1, verbose=False):
-        """"A wrapper for getting elevation from a domain"""
-        subdomains = self.create_subdomains(pelayout, tgt_halo=tgt_halo, eds=eds, src_halo=src_halo,
-                                            refine_loop_args=refine_loop_args, verbose=verbose)
-
-        topo_gen_args = calc_args.copy()
-        topo_gen_args.update({'save_hits': not (hitmap is None), 'verbose': verbose})
-
-        if nprocs>1:
-            twlist = topo_gen_mp(subdomains.flatten(), nprocs=nprocs, topo_gen_args=topo_gen_args)
-        else:
-            twlist = [topo_gen(dm, **topo_gen_args) for dm in subdomains.flatten()]
-
-        if topo_gen_args['save_hits']:
-            twlist, hitlist = zip(*twlist)
-            hitmap.stitch_hits(hitlist)
-
-        self.stitch_subdomains(twlist, tolerance=bnd_tol_level, verbose=verbose, **calc_args)
-
-    def regrid_topography_masked(self, lat_start=None, lat_end=89.75, lat_step=0.5,
-                                 pelayout=None, tgt_halo=0, nprocs=1, eds=None, src_halo=0,
-                                 refine_loop_args={}, calc_args={}, hitmap=None, bnd_tol_level=1,
-                                 verbose=True):
-
-        if lat_start is None: lat_start = 90.0 - self.pole_radius
-        latc = lat_start + lat_step
-        north_masks = self.north_mask
-        while latc<=lat_end:
-            print(latc)
-            mask_domains = north_masks.create_mask_domain(tgt_halo=tgt_halo, pole_radius=90.0-latc)
-            for ii, mask_domain in enumerate(mask_domains):
-                refine_loop_args['singularity_radius'] = mask_domain.pole_radius
-                mask_domain.regrid_topography(pelayout=pelayout, tgt_halo=tgt_halo, nprocs=nprocs, eds=eds, src_halo=src_halo,
-                                              refine_loop_args=refine_loop_args, calc_args=calc_args, hitmap=hitmap,
-                                              bnd_tol_level=bnd_tol_level)
-                self.stitch_mask_domain(mask_domain, north_masks[ii], tgt_halo, tolerance=bnd_tol_level, **calc_args)
-            self.stitch_mask_fold_north(tolerance=bnd_tol_level, do_effective=calc_args['do_effective'])
-            north_masks = NorthPoleMask(radius=latc, counts=2)
-            latc += lat_step
-
 def match_edges(edge1, edge2, rfl1, rfl2, tolerance=0, verbose=True, message=''):
     """Check if two edges are identical and if not, return the proper one.
 
