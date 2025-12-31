@@ -4,7 +4,7 @@ import warnings
 
 from ptopo.external.thinwall.python import GMesh
 from ptopo.external.thinwall.python import ThinWalls
-from .tile_utils import slice_array, decompose_domain, normlize_longitude, box_halo, BoundaryBox, reverse_slice, GLOBAL_POS
+from .tile_utils import slice_array, decompose_domain, normalize_longitude, box_halo, BoundaryBox, reverse_slice, GLOBAL_POS
 from .configs import CalcConfig, TileConfig
 
 class Domain(ThinWalls.ThinWalls):
@@ -122,7 +122,7 @@ class Domain(ThinWalls.ThinWalls):
 
         lon = slice_array(self.lon, bbox=bbox, cyclic_zonal=reentrant_x, fold_north=fold_n)
         lat = slice_array(self.lat, bbox=bbox, cyclic_zonal=reentrant_x, fold_north=fold_n)
-        if norm_lon: lon = normlize_longitude(lon, lat)
+        if norm_lon: lon = normalize_longitude(lon, lat)
 
         if self.Idx is None: Idx = None
         else: Idx = slice_array(self.Idx, bbox=bbox, position='center', cyclic_zonal=reentrant_x, fold_north=fold_n)
@@ -222,7 +222,7 @@ class Domain(ThinWalls.ThinWalls):
     #     mask_halo = (jst-tgt_halo, jed+tgt_halo, ist-tgt_halo, ied+tgt_halo)
     #     lon = slice_array(self.lon, box=mask_halo, cyclic_zonal=False, fold_north=True)
     #     lat = slice_array(self.lat, box=mask_halo, cyclic_zonal=False, fold_north=True)
-    #     if norm_lon: lon = normlize_longitude(lon, lat)
+    #     if norm_lon: lon = normalize_longitude(lon, lat)
 
     #     Idx, Idy = None, None
     #     if self.Idx is not None:
@@ -450,7 +450,7 @@ class Domain(ThinWalls.ThinWalls):
         Insert mask domain.
         The assumption is the mask domain has the higher refine level and always replace the old values.
         """
-        self._stitch_tile(mask)
+        self._stitch_tile(mask, config)
 
         if config.calc_thinwalls:
             # Western edge

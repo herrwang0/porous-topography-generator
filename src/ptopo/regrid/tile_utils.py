@@ -485,17 +485,23 @@ def box_halo(box, halo):
         halo_j, halo_i = halo, halo
     return (jst - halo_j, jed + halo_j, ist - halo_i, ied + halo_j)
 
-def normlize_longitude(lon, lat):
-    """Shift longitude by 360*n so that it is monotonic (when it is possible)"""
-    # To avoid jumps, the reference longitude should be outside of the domain.
+def normalize_longitude(lon, lat):
+    """
+    Shift longitude by 360*n so that it is monotonic (when it is possible)
+    """
+
+    # 1) Find a reference longitude.
+    # To avoid jumps, the reference longitude should be well outside of the domain.
     # reflon is a best-guess of a reference longitude.
     reflon = lon[lon.shape[0]//2, lon.shape[1]//2] - 180.0
-    lon_shift = np.mod(lon-reflon, 360.0) + reflon
+    lon_shift = np.mod(lon - reflon, 360.0) + reflon
 
-    # North Pole longitude should be within the range of the rest of the domain
-    Jp, Ip = np.nonzero(lat==90)
+    # 2) Modify the longitude of North Pole.
+    # It should be within the range of the rest of the domain
+    Jp, Ip = np.nonzero(lat == 90)
     for jj, ii in zip(Jp, Ip):
-        if lon_shift[jj, ii]==lon_shift.max() or lon_shift[jj, ii]==lon_shift.min():
+        if lon_shift[jj, ii] == lon_shift.max() or lon_shift[jj, ii] == lon_shift.min():
             lon_shift[jj, ii] = np.nan
             lon_shift[jj, ii] = np.nanmean(lon_shift)
+
     return lon_shift
