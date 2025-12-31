@@ -4,15 +4,16 @@ configs.py
 Pure helper classes for various configurations
 """
 
-from dataclasses import dataclass, asdict
-from typing import Tuple
+from dataclasses import dataclass, asdict, field
+from typing import Tuple, Optional
+from enum import Enum
 
 @dataclass
 class RefineConfig:
     """A container for GMesh.GMesh.refine() options"""
-    use_center : bool = True
-    resolution_limit : bool = False
     fixed_refine_level : int = -1
+    resolution_limit : bool = False
+    use_center : bool = True
     work_in_3d : bool = False
     singularity_radius : float = 0.25
     max_mb : float = 32000
@@ -21,12 +22,13 @@ class RefineConfig:
     def to_kwargs(self):
         return asdict(self)
 
-    def print_options(self):
+    def print_options(self, indent=0):
+        pad = " " * indent
         options = asdict(self)
         max_len = max(len(key) for key in options.keys())
-        print("RefineConfig Options:")
+        print(f"{pad}RefineConfig Options:")
         for key, value in options.items():
-            print(f"  {key.ljust(max_len)} : {value}")
+            print(f"{pad}  {key.ljust(max_len)} : {value}")
 
 @dataclass
 class CalcConfig:
@@ -54,7 +56,9 @@ class CalcConfig:
         else:
             return None
 
-    def print_options(self):
+    def print_options(self, indent=0):
+        pad = " " * indent
+
         order = [
             "calc_cell_stats",
             "calc_thinwalls",
@@ -77,12 +81,12 @@ class CalcConfig:
         }
 
         max_len = max(len(k) for k in order)
-        print("CalcConfig Options:")
+        print(f"{pad}CalcConfig Options:")
         for key in order:
             # Skip thinwalls_interp and calc_effective_tw if calc_thinwalls is False
             if key in ["thinwalls_interp", "calc_effective_tw"] and not self.calc_thinwalls:
                 continue
-            print(f"  {key.ljust(max_len)} : {values[key]}")
+            print(f"{pad}  {key.ljust(max_len)} : {values[key]}")
 
 @dataclass
 class TileConfig:
@@ -119,7 +123,9 @@ class TileConfig:
         """Total number of tiles"""
         return self.pelayout[0] * self.pelayout[1]
 
-    def print_options(self):
+    def print_options(self, indent=0):
+        pad = " " * indent
+
         order = [
             "pelayout",
             "tgt_halo",
@@ -139,6 +145,55 @@ class TileConfig:
         }
 
         max_len = max(len(k) for k in order)
-        print("TileConfig Options:")
+        print(f"{pad}TileConfig Options:")
         for key in order:
-            print(f"  {key.ljust(max_len)} : {values[key]}")
+            print(f"{pad}  {key.ljust(max_len)} : {values[key]}")
+
+class NorthPoleMode(str, Enum):
+    MASK_ONLY = "mask"
+    RING_UPDATE = "ring"
+
+@dataclass
+class NorthPoleConfig:
+    """Configuration for North Pole handling"""
+
+    mode: NorthPoleMode = NorthPoleMode.MASK_ONLY
+
+    # Shared
+    lat_start: float = 85.0
+
+    # Ring-update parameters (only used if mode == RING_UPDATE)
+    lat_stop: Optional[float] = None
+    lat_step: Optional[float] = None
+    pole_halo : int = 0
+    tile_cfg: TileConfig = field(default_factory=TileConfig)
+
+    def __post_init__(self):
+        if self.mode == NorthPoleMode.MASK_ONLY:
+            # Enforce unused parameters are unset
+            self.lat_stop = None
+            self.lat_step = None
+
+        elif self.mode == NorthPoleMode.RING_UPDATE:
+            if self.lat_stop is None or self.lat_step is None:
+                raise ValueError(
+                    "lat_stop and lat_step must be set for ring update mode"
+                )
+            if self.lat_step <= 0:
+                raise ValueError("lat_step must be positive")
+            if self.lat_start >= self.lat_stop:
+                raise ValueError("lat_start must be < lat_stop")
+
+    def print_options(self, indent=0):
+        pad = " " * indent
+        print(f"{pad}NorthPoleConfig Options:")
+        print(f"{pad}  mode       : {self.mode.value}")
+        print(f"{pad}  lat_start  : {self.lat_start}")
+
+        if self.mode == NorthPoleMode.RING_UPDATE:
+            print(f"{pad}  lat_stop   : {self.lat_stop}")
+            print(f"{pad}  lat_step   : {self.lat_step}")
+            print(f"{pad}  pole_halo  : {self.pole_halo}")
+            # Nested TileConfig
+            if self.tile_cfg is not None:
+                self.tile_cfg.print_options(indent=indent + 2)
