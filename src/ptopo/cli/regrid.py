@@ -100,14 +100,14 @@ def regrid(args):
     if args.verbose:
         print(  "'"+args.lon_tgt+"'[::2, ::2]", '-> lonb_tgt')
         print(  "'"+args.lat_tgt+"'[::2, ::2]", '-> latb_tgt')
-    lonb_tgt = netCDF4.Dataset(args.target_grid).variables['x'][::2, ::2].data
-    latb_tgt = netCDF4.Dataset(args.target_grid).variables['y'][::2, ::2].data
+    lonb_tgt = netCDF4.Dataset(args.target_grid)['x'][::2, ::2].data
+    latb_tgt = netCDF4.Dataset(args.target_grid)['y'][::2, ::2].data
     if args.mono_lon:
         for ix in range(lonb_tgt.shape[1]-1):
             if lonb_tgt[-1,ix+1]<lonb_tgt[-1,ix]: lonb_tgt[-1,ix+1] += 360.0
     if args.do_gradient:
-        dxs = netCDF4.Dataset(args.target_grid).variables['dx'][:].data
-        dys = netCDF4.Dataset(args.target_grid).variables['dy'][:].data
+        dxs = netCDF4.Dataset(args.target_grid)['dx'][:].data
+        dys = netCDF4.Dataset(args.target_grid)['dy'][:].data
         dx = dxs[1::2,::2] + dxs[1::2,1::2]
         dy = dys[::2,1::2] + dys[1::2,1::2]
         Idx, Idy = 1.0/dx, 1.0/dy
@@ -156,8 +156,15 @@ def regrid(args):
         print('np_lat_end: ', np_lat_end)
         print('np_lat_step: ', np_lat_step)
 
+    if refine_config.resolution_limit and north_pole_lat < 90:
+        np_masks = NorthPoleMask(GMesh.GMesh(lon=lonb_tgt, lat=latb_tgt), counts=2, radius=90-north_pole_lat)
+        mask_res = [ mask.to_box() for mask in np_masks]
+
     # Create the target grid domain
-    domain = Domain(lon=lonb_tgt, lat=latb_tgt, Idx=Idx, Idy=Idy, reentrant_x=tgt_reentrant_x, fold_n=tgt_fold_n, eds=eds)
+    domain = Domain(
+        lon=lonb_tgt, lat=latb_tgt, Idx=Idx, Idy=Idy,
+        reentrant_x=tgt_reentrant_x, fold_n=tgt_fold_n, mask_res=mask_res, eds=eds
+    )
     if calc_config.save_hits:
         hm = HitMap(lon=lon_src, lat=lat_src, from_cell_center=True)
     else:
@@ -201,6 +208,9 @@ def regrid(args):
     )
 
     clock.delta('Regrid main')
+
+    if False:
+        proprogress_north_pole_ring(domain, np_masks)
 
     # if args.fixed_refine_level<0:
     #     if args.verbose:

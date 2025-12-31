@@ -10,7 +10,7 @@ class Domain(ThinWalls.ThinWalls):
     """A container for regridded topography
     """
     def __init__(self, lon=None, lat=None, Idx=None, Idy=None, is_geo_coord=True,
-                 reentrant_x=False, fold_n=False, bbox=None, resolution_masks=[],
+                 reentrant_x=False, fold_n=False, bbox=None, mask_res=[],
                  eds=None, subset_eds=False, src_halo=0):
         """
         Parameters
@@ -50,7 +50,7 @@ class Domain(ThinWalls.ThinWalls):
         if self.fold_n:
             assert self.ni%2==0, 'An odd number ni does not work with bi-polar cap.'
 
-        self.mask_res = resolution_masks
+        self.mask_res = mask_res
 
         if eds: self._fit_src_coords(eds, subset_eds=subset_eds, halo=src_halo)
 
@@ -90,7 +90,7 @@ class Domain(ThinWalls.ThinWalls):
         else:
             self.eds = eds
 
-    def make_subdomain(self, bbox, norm_lon=False, reentrant_x=None, fold_n=None, masks=[], subset_eds=False, src_halo=0):
+    def make_subdomain(self, bbox, norm_lon=False, reentrant_x=None, fold_n=None, global_masks=[], subset_eds=False, src_halo=0):
         """
         Makes a sub-domains from a BoundaryBox.
 
@@ -103,7 +103,7 @@ class Domain(ThinWalls.ThinWalls):
             If None, use self.reentrant_x
         fold_n : bool | None, optional
             If None, use self.fold_n
-        masks : list
+        global_masks : list
             List of resolution mask BoundaryBox
         subset_eds : bool, optional
             If True, subset source data
@@ -128,11 +128,14 @@ class Domain(ThinWalls.ThinWalls):
         if self.Idy is None: Idy = None
         else: Idy = slice_array(self.Idy, bbox=bbox, position='center', cyclic_zonal=reentrant_x, fold_north=fold_n)
 
-        masks = bbox.local_masks(masks)
+        masks = []
+        for mask_in in global_masks:
+            if bbox.local_mask(mask_in):
+                masks.append( bbox.local_mask(mask_in).to_box() )
 
         return Domain(
             lon=lon, lat=lat, Idx=Idx, Idy=Idy, is_geo_coord=self.is_geo_coord,
-            reentrant_x=False, fold_n=False, bbox=bbox, resolution_masks=masks,
+            reentrant_x=False, fold_n=False, bbox=bbox, mask_res=masks,
             eds=self.eds, subset_eds=subset_eds, src_halo=src_halo
         )
 
@@ -187,7 +190,7 @@ class Domain(ThinWalls.ThinWalls):
 
                 bbox = BoundaryBox(jst, jed, ist, ied, tgt_halo, (pe_j, pe_i))
                 chunks[pe_j, pe_i] = self.make_subdomain(
-                    bbox, norm_lon=norm_lon, masks=self.mask_res, subset_eds=subset_eds, src_halo=src_halo
+                    bbox, norm_lon=norm_lon, global_masks=self.mask_res, subset_eds=subset_eds, src_halo=src_halo
                 )
 
                 if verbose:

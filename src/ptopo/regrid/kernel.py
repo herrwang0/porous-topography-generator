@@ -171,7 +171,7 @@ def topo_gen(grid, config=CalcConfig(), refine_config=RefineConfig(), verbose=Tr
     if timers: clock.delta('setup topo_gen')
 
     # Step 1: Refine grid
-    levels = grid.refine_loop(grid.eds, verbose=True, timers=False, **refine_config.to_kwargs())
+    levels = grid.refine_loop(grid.eds, verbose=True, timers=False, mask_res=grid.mask_res, **refine_config.to_kwargs())
     nrfl = levels[-1].rfl
     if timers: clock.delta('refine grid')
 
