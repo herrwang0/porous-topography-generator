@@ -225,7 +225,7 @@ def regrid(args):
         reentrant_x=tgt_reentrant_x, fold_n=tgt_fold_n, mask_res=mask_res, eds=eds
     )
     if args.verbose:
-        print('\n')
+        print('\nTarget Domain:')
         print(domain.format())
 
     if calc_cfg.save_hits:
@@ -238,7 +238,7 @@ def regrid(args):
     if args.verbose:
         print('\nStarting regridding the domain')
 
-    topo_gen_tiles(domain, hm, tile_cfg=tile_cfg, calc_cfg=calc_cfg, refine_cfg=refine_cfg)
+    topo_gen_tiles(domain, hm, tile_cfg=tile_cfg, calc_cfg=calc_cfg, refine_cfg=refine_cfg, verbose=args.verbose)
     # tiles = domain.make_tiles(config=tile_cfg, verbose=False)
     # # clock.delta('Domain decomposition')
 
