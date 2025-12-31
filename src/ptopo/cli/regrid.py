@@ -3,7 +3,8 @@ import argparse
 import numpy
 import netCDF4
 from ptopo.external.thinwall.python import GMesh
-from ptopo.regrid.kernel import HitMap, TimeLog, CalcConfig, RefineConfig, topo_gen_mp, topo_gen
+from ptopo.regrid.configs import CalcConfig, RefineConfig, TileConfig
+from ptopo.regrid.kernel import HitMap, TimeLog, topo_gen_mp, topo_gen, topo_gen_tiles
 from ptopo.regrid.output_utils import write_output, write_hitmap
 from ptopo.regrid.topo_regrid import Domain
 from ptopo.regrid.domain_mask import NorthPoleMask
@@ -122,12 +123,6 @@ def regrid(args):
         tgt_fold_n = True
     clock.delta('Read target')
 
-    # Domain decomposition
-    pe = args.pe
-    pe_p = args.pe_p
-    if pe_p is None: pe_p = pe
-    # nprocs = args.nprocs
-
     # Calculation options
     calc_config = CalcConfig(
         calc_cell_stats=(not args.mean_only),
@@ -156,9 +151,23 @@ def regrid(args):
         print('np_lat_end: ', np_lat_end)
         print('np_lat_step: ', np_lat_step)
 
+    # Domain decomposition
+    pe_p = args.pe_p
+    if pe_p is None: pe_p = args.pe
+    # nprocs = args.nprocs
+    if args.do_thinwalls:
+        bnd_tol_level = args.bnd_tol_level
+    else:
+        bnd_tol_level = 0
+    tile_config = TileConfig(
+        pelayout=args.pe, tgt_halo=args.tgt_halo, norm_lon=True, subset_eds=True, src_halo=args.src_halo, bnd_tol_level=bnd_tol_level
+    )
+    if args.verbose:
+        tile_config.print_options()
+
     if refine_config.resolution_limit and north_pole_lat < 90:
         np_masks = NorthPoleMask(GMesh.GMesh(lon=lonb_tgt, lat=latb_tgt), counts=2, radius=90-north_pole_lat)
-        mask_res = [ mask.to_box() for mask in np_masks]
+        mask_res = [ mask.to_box() for mask in np_masks ]
 
     # Create the target grid domain
     domain = Domain(
@@ -174,16 +183,9 @@ def regrid(args):
     # Regrid
     if args.verbose:
         print('Starting regridding the domain')
-    if args.do_thinwalls:
-        bnd_tol_level = args.bnd_tol_level
-    else:
-        bnd_tol_level = 0
-    # dm.regrid_topography(pelayout=pe, tgt_halo=args.tgt_halo, nprocs=nprocs, eds=eds, src_halo=args.src_halo,
-    #                      refine_loop_args=refine_options, calc_args=calc_args, hitmap=hm,
-    #                      bnd_tol_level=bnd_tol_level, verbose=args.verbose)
-    tiles = domain.make_tiles(
-        pelayout=pe, tgt_halo=args.tgt_halo, subset_eds=True, src_halo=args.src_halo, verbose=False
-    )
+
+    # topo_gen_tiles(domain, hm, tile_config=tile_config, calc_config=calc_config, refine_config=refine_config)
+    tiles = domain.make_tiles(config=tile_config, verbose=False)
     # clock.delta('Domain decomposition')
 
     twlist, hitlist = [], []
@@ -200,17 +202,17 @@ def regrid(args):
     # else: # with nprocs==1, multiprocessing is not used.
     #     twlist = [topo_gen(sdm, refine_config=refine_config, save_hits=(not (hm is None)), verbose=True, timers=True, tw_interp=args.thinwalls_interp) for sdm in subdomains.flatten()]
 
-    if calc_config.save_hits:
-        hm.stitch_hits(hitlist)
-
     domain.stitch_tiles(
         twlist, tolerance=bnd_tol_level, config=calc_config, verbose=args.verbose
     )
 
+    if calc_config.save_hits:
+        hm.stitch_hits(hitlist)
+
     clock.delta('Regrid main')
 
     if False:
-        proprogress_north_pole_ring(domain, np_masks)
+        progress_north_pole_ring(domain, np_masks)
 
     # if args.fixed_refine_level<0:
     #     if args.verbose:

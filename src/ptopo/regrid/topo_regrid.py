@@ -1,10 +1,11 @@
 import sys
 import numpy
+import warnings
 
 from ptopo.external.thinwall.python import GMesh
 from ptopo.external.thinwall.python import ThinWalls
 from .tile_utils import slice_array, decompose_domain, normlize_longitude, box_halo, BoundaryBox, reverse_slice, GLOBAL_POS
-from .kernel import CalcConfig
+from .configs import CalcConfig, TileConfig
 
 class Domain(ThinWalls.ThinWalls):
     """A container for regridded topography
@@ -139,8 +140,7 @@ class Domain(ThinWalls.ThinWalls):
             eds=self.eds, subset_eds=subset_eds, src_halo=src_halo
         )
 
-    def make_tiles(self, pelayout, tgt_halo=0, x_sym=True, y_sym=False, norm_lon=None, subset_eds=True, src_halo=0,
-                   verbose=False):
+    def make_tiles(self, config=TileConfig(), verbose=False):
         """Creates a list of sub-domains with corresponding source lon, lat and elev sections.
 
         Parameters
@@ -149,9 +149,9 @@ class Domain(ThinWalls.ThinWalls):
             Number of sub-domains in each direction
         tgt_halo : int, optional
             Halo size
-        x_sym, y_sym : bool, optional
-            Whether try to use symmetric domain decomposition in x or y.
-            Default is x_sym=True and y_sym=False.
+        symmetry : tuple of bool, optional
+            (y_sym, x_sym). Whether try to use symmetric domain decomposition in x or y.
+            Default is (False, True).
         norm_lon : bool, optional
             If True, make sure there is no longitude "jumps" (except for poles) in the subdomain.
         subset_eds : bool, optional
@@ -166,18 +166,24 @@ class Domain(ThinWalls.ThinWalls):
         Out : ndarray
             A 2D array of RefineWrapper objects
         """
-        if norm_lon is None: norm_lon = self.is_geo_coord
 
-        if pelayout[1]==1 and tgt_halo>0:
-            print('WARNING: only 1 subdomain in i-direction, which may not work with bi-polar cap.')
-        if (not x_sym) and self.fold_n:
-            print(('WARNING: domain decomposition is not guaranteed to be symmetric in x direction, ',
-                   'which may not work with bi-polar cap.'))
+        norm_lon = self.is_geo_coord if config.norm_lon is None else config.norm_lon
 
-        j_domain = decompose_domain(self.nj, pelayout[0], symmetric=y_sym)
-        i_domain = decompose_domain(self.ni, pelayout[1], symmetric=x_sym)
+        if config.pelayout[1]==1 and config.tgt_halo>0:
+            warnings.warn(
+                f"only 1 subdomain in i-direction, which may not work with bi-polar cap.",
+                UserWarning
+            )
+        if (not config.symmetry[1]) and self.fold_n:
+            warnings.warn(
+                "domain decomposition is not guaranteed to be symmetric in x direction, which may not work with bi-polar cap.",
+                UserWarning
+            )
+
+        j_domain = decompose_domain(self.nj, config.pelayout[0], symmetric=config.symmetry[0])
+        i_domain = decompose_domain(self.ni, config.pelayout[1], symmetric=config.symmetry[1])
         if verbose:
-            print('Domain is decomposed to {:}. Halo size = {:d}.'.format(pelayout, tgt_halo))
+            print(f'Domain is decomposed to {config.pelayout}. Halo size = {config.tgt_halo:d}.')
             print('  i: ', i_domain)
             print('  j: ', j_domain)
             print('\n')
@@ -186,11 +192,11 @@ class Domain(ThinWalls.ThinWalls):
         self.pelayout = numpy.empty( (j_domain.size, i_domain.size), dtype=object )
         for pe_j, (jst, jed) in enumerate(j_domain):
             for pe_i, (ist, ied) in enumerate(i_domain):
-                self.pelayout[pe_j, pe_i] = ((jst, jed, ist, ied), tgt_halo) # indices for cell centers
+                self.pelayout[pe_j, pe_i] = ((jst, jed, ist, ied), config.tgt_halo) # indices for cell centers
 
-                bbox = BoundaryBox(jst, jed, ist, ied, tgt_halo, (pe_j, pe_i))
+                bbox = BoundaryBox(jst, jed, ist, ied, config.tgt_halo, (pe_j, pe_i))
                 chunks[pe_j, pe_i] = self.make_subdomain(
-                    bbox, norm_lon=norm_lon, global_masks=self.mask_res, subset_eds=subset_eds, src_halo=src_halo
+                    bbox, norm_lon=norm_lon, global_masks=self.mask_res, subset_eds=config.subset_eds, src_halo=config.src_halo
                 )
 
                 if verbose:
