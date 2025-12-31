@@ -39,6 +39,9 @@ class Domain(ThinWalls.ThinWalls):
         """
         super().__init__(lon=lon, lat=lat, is_geo_coord=is_geo_coord)
         self.Idx, self.Idy = Idx, Idy
+        self.c_rfl = numpy.zeros( self.shape, dtype=numpy.int32 )
+        self.u_rfl = numpy.zeros( (self.shape[0],self.shape[1]+1), dtype=numpy.int32 )
+        self.v_rfl = numpy.zeros( (self.shape[0]+1,self.shape[1]), dtype=numpy.int32 )
 
         if bbox:
             assert (self.nj == bbox.data_nj) and (self.ni == bbox.data_ni), f'bbox incorrect {self.nj}!= {bbox.nj}, {self.ni}!= {bbox.ni}'
@@ -90,6 +93,17 @@ class Domain(ThinWalls.ThinWalls):
             self.eds = eds.subset(Is, Ie, Js, Je)
         else:
             self.eds = eds
+
+    def update_thinwalls_arrays(self, tw):
+        """
+        Replace the Domain's ThinWalls arrays with the ones from `tw` without copying
+        """
+        self.c_simple = tw.c_simple
+        self.u_simple = tw.u_simple
+        self.v_simple = tw.v_simple
+        self.c_effective = tw.c_effective
+        self.u_effective = tw.u_effective
+        self.v_effective = tw.v_effective
 
     def make_subdomain(self, bbox, norm_lon=False, reentrant_x=None, fold_n=None, global_masks=[], subset_eds=False, src_halo=0):
         """
@@ -245,14 +259,14 @@ class Domain(ThinWalls.ThinWalls):
         Jl_slice, Il_slice = tile.bbox.Jcl_outer_slice, tile.bbox.Icl_outer_slice
 
         self.c_simple[jg_slice, ig_slice] = tile.c_simple[jl_slice, il_slice]
-        self.c_rfl[jg_slice, ig_slice] = tile.mrfl
+        self.c_rfl[jg_slice, ig_slice] = tile.c_rfl[jl_slice, il_slice]
 
         # inner edges
         if config.calc_thinwalls:
             self.u_simple[jg_slice, Ig_slice] = tile.u_simple[jl_slice, Il_slice]
             self.v_simple[Jg_slice, ig_slice] = tile.v_simple[Jl_slice, il_slice]
-            self.u_rfl[jg_slice, Ig_slice] = tile.mrfl
-            self.v_rfl[Jg_slice, ig_slice] = tile.mrfl
+            self.u_rfl[jg_slice, Ig_slice] = tile.u_rfl[jl_slice, Il_slice]
+            self.v_rfl[Jg_slice, ig_slice] = tile.v_rfl[Jl_slice, il_slice]
 
             if config.calc_effective_tw:
                 self.c_effective[jg_slice, ig_slice] = tile.c_effective[jl_slice, il_slice]
@@ -275,16 +289,16 @@ class Domain(ThinWalls.ThinWalls):
             global_j_slice, global_I = rbox.jcg_slice, rbox.i0
             local_j_slice_l, local_I_l = global_j_slice, global_I
             local_j_slice_r, local_I_r = rbox.jcl_slice, rbox.I0cl
-            rfl_l = self.u_rfl[global_j_slice, global_I]
-            rfl_r = right.mrfl
+            rfl_l = self.u_rfl[local_j_slice_l, local_I_l]
+            rfl_r = right.u_rfl[local_j_slice_r, local_I_r]
 
         elif rbox.position == GLOBAL_POS: # "right" is the parent Domain and "left" is a tile.
             edgeloc = f'Tile eastern edge [{lbox.position}]'
             global_j_slice, global_I = lbox.jcg_slice, lbox.i1
             local_j_slice_l, local_I_l = lbox.jcl_slice, lbox.I1cl
             local_j_slice_r, local_I_r = global_j_slice, global_I
-            rfl_l = left.mrfl
-            rfl_r = self.u_rfl[global_j_slice, global_I]
+            rfl_l = left.u_rfl[local_j_slice_l, local_I_l]
+            rfl_r = self.u_rfl[local_j_slice_r, local_I_r]
 
         else: # Both "left" and "right" are tiles
             edgeloc = f'{lbox.position} and {rbox.position}'
@@ -299,8 +313,8 @@ class Domain(ThinWalls.ThinWalls):
             global_j_slice, global_I = global_j_slice_l, global_I_l
             local_j_slice_l, local_I_l = lbox.jcl_slice, lbox.I1cl
             local_j_slice_r, local_I_r = rbox.jcl_slice, rbox.I0cl
-            rfl_l = left.mrfl
-            rfl_r = right.mrfl
+            rfl_l = left.u_rfl[local_j_slice_l, local_I_l]
+            rfl_r = right.u_rfl[local_j_slice_r, local_I_r]
 
         self.u_simple[global_j_slice, global_I] = match_edges(
             left.u_simple[local_j_slice_l, local_I_l], right.u_simple[local_j_slice_r, local_I_r], rfl_l, rfl_r,
@@ -327,16 +341,16 @@ class Domain(ThinWalls.ThinWalls):
             global_J, global_i_slice = tbox.j0, tbox.icg_slice
             local_J_b, local_i_slice_b = global_J, global_i_slice
             local_J_t, local_i_slice_t = tbox.J0cl, tbox.icl_slice
-            rfl_b = self.v_rfl[global_J, global_i_slice]
-            rfl_t = top.mrfl
+            rfl_b = self.v_rfl[local_J_b, local_i_slice_b]
+            rfl_t = top.v_rfl[local_J_t, local_i_slice_t]
 
         elif tbox.position == GLOBAL_POS: # "top" is the parent Domain and "bottom" is a tile.
             edgeloc = f'Tile northern edge [{bbox.position}]'
             global_J, global_i_slice = bbox.j1, bbox.icg_slice
             local_J_b, local_i_slice_b = bbox.J1cl, bbox.icl_slice
             local_J_t, local_i_slice_t = global_J, global_i_slice
-            rfl_b = bottom.mrfl
-            rfl_t = self.v_rfl[global_J, global_i_slice]
+            rfl_b = bottom.v_rfl[local_J_b, local_i_slice_b]
+            rfl_t = self.v_rfl[local_J_t, local_i_slice_t]
 
         else: # Both "bottom" and "top" are tiles
             edgeloc = f'{bbox.position} and {tbox.position}'
@@ -350,8 +364,8 @@ class Domain(ThinWalls.ThinWalls):
             global_J, global_i_slice = global_J_b, global_i_slice_b
             local_J_b, local_i_slice_b = bbox.J1cl, bbox.icl_slice
             local_J_t, local_i_slice_t = tbox.J0cl, tbox.icl_slice
-            rfl_b = bottom.mrfl
-            rfl_t = top.mrfl
+            rfl_b = bottom.v_rfl[local_J_b, local_i_slice_b]
+            rfl_t = top.v_rfl[local_J_t, local_i_slice_t]
 
         self.v_simple[global_J, global_i_slice] = match_edges(
             bottom.v_simple[local_J_b, local_i_slice_b], top.v_simple[local_J_t, local_i_slice_t], rfl_b, rfl_t,
@@ -421,11 +435,6 @@ class Domain(ThinWalls.ThinWalls):
 
         if config.calc_roughness: self.roughness = numpy.zeros( self.shape )
         if config.calc_gradient: self.gradient = numpy.zeros( self.shape )
-
-        self.c_rfl = numpy.zeros( self.shape, dtype=numpy.int32 )
-        if config.calc_thinwalls:
-            self.u_rfl = numpy.zeros( (self.shape[0],self.shape[1]+1), dtype=numpy.int32 )
-            self.v_rfl = numpy.zeros( (self.shape[0]+1,self.shape[1]), dtype=numpy.int32 )
 
         # Insert all tiles
         for iy in range(npj):
