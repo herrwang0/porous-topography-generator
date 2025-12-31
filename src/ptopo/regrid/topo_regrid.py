@@ -4,7 +4,7 @@ import warnings
 
 from ptopo.external.thinwall.python import GMesh
 from ptopo.external.thinwall.python import ThinWalls
-from .tile_utils import slice_array, decompose_domain, normalize_longitude, box_halo, BoundaryBox, reverse_slice, GLOBAL_POS
+from .tile_utils import slice_array, decompose_domain, normalize_longitude, box_halo, BoundaryBox, reverse_slice
 from .configs import CalcConfig, TileConfig
 
 class Domain(ThinWalls.ThinWalls):
@@ -281,24 +281,20 @@ class Domain(ThinWalls.ThinWalls):
         Reconcile shared edges from two providers (tile or domain) along i.
         """
         lbox, rbox = left.bbox, right.bbox
-        if lbox.position == GLOBAL_POS and rbox.position == GLOBAL_POS:
+        if left is self and right is self:
             raise Exception('Both "left" and "right" are the parent Domain.')
 
-        elif lbox.position == GLOBAL_POS: # "left" is the parent Domain and "right" is a tile.
+        elif left == self: # "left" is the parent Domain and "right" is a tile.
             edgeloc = f'Tile western edge [{rbox.position}]'
             global_j_slice, global_I = rbox.jcg_slice, rbox.i0
             local_j_slice_l, local_I_l = global_j_slice, global_I
             local_j_slice_r, local_I_r = rbox.jcl_slice, rbox.I0cl
-            rfl_l = self.u_rfl[local_j_slice_l, local_I_l]
-            rfl_r = right.u_rfl[local_j_slice_r, local_I_r]
 
-        elif rbox.position == GLOBAL_POS: # "right" is the parent Domain and "left" is a tile.
+        elif right is self: # "right" is the parent Domain and "left" is a tile.
             edgeloc = f'Tile eastern edge [{lbox.position}]'
             global_j_slice, global_I = lbox.jcg_slice, lbox.i1
             local_j_slice_l, local_I_l = lbox.jcl_slice, lbox.I1cl
             local_j_slice_r, local_I_r = global_j_slice, global_I
-            rfl_l = left.u_rfl[local_j_slice_l, local_I_l]
-            rfl_r = self.u_rfl[local_j_slice_r, local_I_r]
 
         else: # Both "left" and "right" are tiles
             edgeloc = f'{lbox.position} and {rbox.position}'
@@ -313,8 +309,9 @@ class Domain(ThinWalls.ThinWalls):
             global_j_slice, global_I = global_j_slice_l, global_I_l
             local_j_slice_l, local_I_l = lbox.jcl_slice, lbox.I1cl
             local_j_slice_r, local_I_r = rbox.jcl_slice, rbox.I0cl
-            rfl_l = left.u_rfl[local_j_slice_l, local_I_l]
-            rfl_r = right.u_rfl[local_j_slice_r, local_I_r]
+
+        rfl_l = left.u_rfl[local_j_slice_l, local_I_l]
+        rfl_r = right.u_rfl[local_j_slice_r, local_I_r]
 
         self.u_simple[global_j_slice, global_I] = match_edges(
             left.u_simple[local_j_slice_l, local_I_l], right.u_simple[local_j_slice_r, local_I_r], rfl_l, rfl_r,
@@ -333,24 +330,20 @@ class Domain(ThinWalls.ThinWalls):
         Reconcile shared edges from two providers (tile or domain) along j.
         """
         bbox, tbox = bottom.bbox, top.bbox
-        if bbox.position == GLOBAL_POS and tbox.position == GLOBAL_POS:
+        if bottom is self and top is self:
             raise Exception('Both "bottom" and "top" are the parent Domain.')
 
-        elif bbox.position == GLOBAL_POS: # "bottom" is the parent Domain and "top" is a tile.
+        elif bottom is self: # "bottom" is the parent Domain and "top" is a tile.
             edgeloc = f'Tile southern edge [{tbox.position}]'
             global_J, global_i_slice = tbox.j0, tbox.icg_slice
             local_J_b, local_i_slice_b = global_J, global_i_slice
             local_J_t, local_i_slice_t = tbox.J0cl, tbox.icl_slice
-            rfl_b = self.v_rfl[local_J_b, local_i_slice_b]
-            rfl_t = top.v_rfl[local_J_t, local_i_slice_t]
 
-        elif tbox.position == GLOBAL_POS: # "top" is the parent Domain and "bottom" is a tile.
+        elif top is self: # "top" is the parent Domain and "bottom" is a tile.
             edgeloc = f'Tile northern edge [{bbox.position}]'
             global_J, global_i_slice = bbox.j1, bbox.icg_slice
             local_J_b, local_i_slice_b = bbox.J1cl, bbox.icl_slice
             local_J_t, local_i_slice_t = global_J, global_i_slice
-            rfl_b = bottom.v_rfl[local_J_b, local_i_slice_b]
-            rfl_t = self.v_rfl[local_J_t, local_i_slice_t]
 
         else: # Both "bottom" and "top" are tiles
             edgeloc = f'{bbox.position} and {tbox.position}'
@@ -364,8 +357,9 @@ class Domain(ThinWalls.ThinWalls):
             global_J, global_i_slice = global_J_b, global_i_slice_b
             local_J_b, local_i_slice_b = bbox.J1cl, bbox.icl_slice
             local_J_t, local_i_slice_t = tbox.J0cl, tbox.icl_slice
-            rfl_b = bottom.v_rfl[local_J_b, local_i_slice_b]
-            rfl_t = top.v_rfl[local_J_t, local_i_slice_t]
+
+        rfl_b = bottom.v_rfl[local_J_b, local_i_slice_b]
+        rfl_t = top.v_rfl[local_J_t, local_i_slice_t]
 
         self.v_simple[global_J, global_i_slice] = match_edges(
             bottom.v_simple[local_J_b, local_i_slice_b], top.v_simple[local_J_t, local_i_slice_t], rfl_b, rfl_t,
