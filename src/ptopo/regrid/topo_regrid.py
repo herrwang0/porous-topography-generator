@@ -40,8 +40,8 @@ class Domain(ThinWalls.ThinWalls):
         super().__init__(lon=lon, lat=lat, is_geo_coord=is_geo_coord)
         self.Idx, self.Idy = Idx, Idy
         self.c_rfl = numpy.zeros( self.shape, dtype=numpy.int32 )
-        self.u_rfl = numpy.zeros( (self.shape[0],self.shape[1]+1), dtype=numpy.int32 )
-        self.v_rfl = numpy.zeros( (self.shape[0]+1,self.shape[1]), dtype=numpy.int32 )
+        self.u_rfl = numpy.zeros( (self.nj, self.ni + 1), dtype=numpy.int32 )
+        self.v_rfl = numpy.zeros( (self.nj + 1, self.ni), dtype=numpy.int32 )
 
         if bbox:
             assert (self.nj == bbox.data_nj) and (self.ni == bbox.data_ni), f'bbox incorrect {self.nj}!= {bbox.nj}, {self.ni}!= {bbox.ni}'
@@ -464,9 +464,6 @@ class Domain(ThinWalls.ThinWalls):
             self._stitch_j( self, mask, tolerance=tolerance, calc_effective=False, verbose=verbose )
             # Northern edge
             self._stitch_j( mask, self, tolerance=tolerance, calc_effective=False, verbose=verbose )
-
-            if self.fold_n:
-                self._stitch_fold_n( tolerance=tolerance, calc_effective=False, verbose=verbose )
 
     def regrid_topography(self, pelayout=None, tgt_halo=0, nprocs=1, eds=None, src_halo=0,
                           refine_loop_args={}, calc_args={}, hitmap=None, bnd_tol_level=1, verbose=False):
