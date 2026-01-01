@@ -2,13 +2,13 @@ import numpy
 from .tile_utils import BoundaryBox
 
 class NorthPoleMask:
-    def __init__(self, grid, counts=0, radius=0.25):
+    def __init__(self, grid, count=0, radius=0.25):
         """
         Parameters
         ----------
         grid : GMesh object
             The domain where the mask is to be found.
-        counts : integer, optional
+        count : integer, optional
             Number of north poles in the target grid. E.g. there are two north poles in the bi-polar cap.
         radius : float
             The radius of the north pole region used to a) decide the mask of north pole in the target grid;
@@ -16,17 +16,21 @@ class NorthPoleMask:
         verbose : bool
         """
         self.grid = grid
-        self.counts = counts
+        self.count = count
         self.radius = radius
         self._masks = self._find_north_pole_rectangles()
 
     def __str__(self):
+        return self.format(indent=0)
+
+    def format(self, indent=0):
+        pad = " " * indent
         disp = [
-            f'North Pole rectangles (radius = {self.radius:5.2f}{chr(176):1s}) in {repr(self.grid)}'
+            f'{pad}North Pole mask rectangles (count = {self.count}, radius = {self.radius:5.2f}{chr(176):1s})'
         ]
         for box in self:
-            idx_str = ','.join([f"{idx:d}" for idx in box])
-            disp.append( f'  js,je,is,ie: {idx_str}, shape: ({box[1]-box[0]}, {box[3]-box[2]})' )
+            idx_str = f"{box.j0:d}, {box.j1:d}, {box.i0:d}, {box.i1:d}"
+            disp.append( f'{pad}  Range : [{idx_str}], shape: ({box.nj:d}, {box.ni:d})' )
         return '\n'.join(disp)
 
     def __getitem__(self, index):
@@ -42,11 +46,11 @@ class NorthPoleMask:
         grid = self.grid
         jj, ii = numpy.where(grid.lat > (90.0 - self.radius))
 
-        if jj.size==0 or ii.size==0 or self.counts==0:
+        if jj.size==0 or ii.size==0 or self.count==0:
             recs = []
-        elif self.counts==1:
+        elif self.count==1:
             recs = BoundaryBox( j0=jj.min(), j1=jj.max(), i0=ii.min(), i1=ii.max() )
-        elif self.counts==2:
+        elif self.count==2:
             jjw = jj[ii<grid.ni//2]; iiw = ii[ii<grid.ni//2]
             jje = jj[ii>grid.ni//2]; iie = ii[ii>grid.ni//2]
             assert numpy.all(jjw==jje), 'nj in the two mask domains mismatch.'
