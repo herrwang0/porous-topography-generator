@@ -22,13 +22,18 @@ class RefineConfig:
     def to_kwargs(self):
         return asdict(self)
 
-    def print_options(self, indent=0):
+    def format(self, indent=0):
         pad = " " * indent
+
+        lines = []
+        lines.append( f"{pad}RefineConfig Options:" )
+
         options = asdict(self)
         max_len = max(len(key) for key in options.keys())
-        print(f"{pad}RefineConfig Options:")
         for key, value in options.items():
-            print(f"{pad}  {key.ljust(max_len)} : {value}")
+            lines.append( f"{pad}  {key.ljust(max_len)} : {value}" )
+
+        return "\n".join( lines)
 
 @dataclass
 class CalcConfig:
@@ -56,8 +61,11 @@ class CalcConfig:
         else:
             return None
 
-    def print_options(self, indent=0):
+    def format(self, indent=0):
         pad = " " * indent
+
+        lines = []
+        lines.append( f"{pad}CalcConfig Options:" )
 
         order = [
             "calc_cell_stats",
@@ -81,12 +89,13 @@ class CalcConfig:
         }
 
         max_len = max(len(k) for k in order)
-        print(f"{pad}CalcConfig Options:")
         for key in order:
             # Skip thinwalls_interp and calc_effective_tw if calc_thinwalls is False
             if key in ["thinwalls_interp", "calc_effective_tw"] and not self.calc_thinwalls:
                 continue
-            print(f"{pad}  {key.ljust(max_len)} : {values[key]}")
+            lines.append( f"{pad}  {key.ljust(max_len)} : {values[key]}" )
+
+        return "\n".join(lines)
 
 @dataclass
 class TileConfig:
@@ -123,8 +132,11 @@ class TileConfig:
         """Total number of tiles"""
         return self.pelayout[0] * self.pelayout[1]
 
-    def print_options(self, indent=0):
+    def format(self, indent=0):
         pad = " " * indent
+
+        lines = []
+        lines.append( f"{pad}TileConfig Options:" )
 
         order = [
             "pelayout",
@@ -145,9 +157,10 @@ class TileConfig:
         }
 
         max_len = max(len(k) for k in order)
-        print(f"{pad}TileConfig Options:")
         for key in order:
-            print(f"{pad}  {key.ljust(max_len)} : {values[key]}")
+            lines.append( f"{pad}  {key.ljust(max_len)} : {values[key]}" )
+
+        return "\n".join(lines)
 
 class NorthPoleMode(str, Enum):
     MASK_ONLY = "mask"
@@ -184,16 +197,20 @@ class NorthPoleConfig:
             if self.lat_start >= self.lat_stop:
                 raise ValueError("lat_start must be < lat_stop")
 
-    def print_options(self, indent=0):
+    def format(self, indent=0):
         pad = " " * indent
-        print(f"{pad}NorthPoleConfig Options:")
-        print(f"{pad}  mode       : {self.mode.value}")
-        print(f"{pad}  lat_start  : {self.lat_start}")
+
+        lines = []
+        lines.append( f"{pad}NorthPoleConfig Options:" )
+        lines.append( f"{pad}  mode       : {self.mode.value}" )
+        lines.append( f"{pad}  lat_start  : {self.lat_start}" )
 
         if self.mode == NorthPoleMode.RING_UPDATE:
-            print(f"{pad}  lat_stop   : {self.lat_stop}")
-            print(f"{pad}  lat_step   : {self.lat_step}")
-            print(f"{pad}  pole_halo  : {self.pole_halo}")
+            lines.append( f"{pad}  lat_stop   : {self.lat_stop}" )
+            lines.append( f"{pad}  lat_step   : {self.lat_step}" )
+            lines.append( f"{pad}  pole_halo  : {self.pole_halo}" )
             # Nested TileConfig
             if self.tile_cfg is not None:
-                self.tile_cfg.print_options(indent=indent + 2)
+                lines.append( self.tile_cfg.format(indent=indent + 2) )
+
+        return "\n".join(lines)
