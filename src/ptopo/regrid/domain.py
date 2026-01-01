@@ -85,7 +85,7 @@ class Domain(ThinWalls.ThinWalls):
             f'{pad}  Domain size (nj ni): ({self.nj}, {self.ni})',
             f'{pad}  Domain range ({coord_name}): [{self.lat.min():10.6f}, {self.lat.max():10.6f}], [{lonmin:10.6f}, {lonmax:10.6f}]',
             f'{pad}  Source grid size (nj ni): ({self.eds.nj:9d}, {self.eds.ni:9d}) ' + \
-            f'{pad}  indices: {(self.eds.lat_coord.start, self.eds.lat_coord.stop, self.eds.lon_coord.start, self.eds.lon_coord.stop)}',
+            f'{pad}  indices: ({self.eds.lat_coord.start}, {self.eds.lat_coord.stop}, {self.eds.lon_coord.start}, {self.eds.lon_coord.stop})',
             f'{pad}  Source grid range ({coord_name}): [{self.eds.lat_coord.bounds[0]:10.6f}, {self.eds.lat_coord.bounds[-1]:10.6f}], [{src_lonmin:10.6f}, {src_lonmax:10.6f}]'
         ]
 
@@ -451,7 +451,8 @@ class Domain(ThinWalls.ThinWalls):
             self._stitch_j( mask, self, tolerance=tolerance, calc_effective=False, verbose=verbose )
 
 def match_edges(edge1, edge2, rfl1, rfl2, tolerance=0, verbose=True, message=''):
-    """Check if two edges are identical and if not, return the proper one.
+    """
+    Check if two edges are identical and if not, return the proper one.
 
     Parameters
     ----------
@@ -474,7 +475,7 @@ def match_edges(edge1, edge2, rfl1, rfl2, tolerance=0, verbose=True, message='')
     Output
         edge : ThinWalls.Stats object
     ----------
-
+Source grid size
     """
     ndiff_hgh = (edge1.hgh!=edge2.hgh).sum()
     ndiff_ave = (edge1.ave!=edge2.ave).sum()

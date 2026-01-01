@@ -1,5 +1,7 @@
 import numpy as np
 import time
+import logging
+
 from ptopo.external.thinwall.python import GMesh
 from ptopo.external.thinwall.python import ThinWalls
 from .roughness import subgrid_roughness_gradient
@@ -8,6 +10,8 @@ from .domain_mask import NorthPoleMask
 
 import multiprocessing
 import functools
+
+logger = logging.getLogger(__name__)
 
 class TimeLog(object):
     """An object logging times"""
@@ -108,6 +112,7 @@ def topo_gen(grid, calc_cfg=CalcConfig(), refine_cfg=RefineConfig(), verbose=Tru
     """
 
     if verbose:
+        logger.info(f'Starting topo_gen() for domain {grid.bbox.position}')
         print(f'Starting topo_gen() for domain {grid.bbox.position}')
 
     if (not refine_cfg.use_center) and (calc_cfg.calc_roughness or calc_cfg.calc_gradient):

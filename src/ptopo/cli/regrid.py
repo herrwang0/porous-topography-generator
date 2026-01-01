@@ -6,7 +6,7 @@ from ptopo.external.thinwall.python import GMesh
 from ptopo.regrid.configs import CalcConfig, RefineConfig, TileConfig, NorthPoleMode, NorthPoleConfig
 from ptopo.regrid.kernel import HitMap, TimeLog, topo_gen_mp, topo_gen, topo_gen_tiles, progress_north_pole_ring
 from ptopo.regrid.output_utils import write_output, write_hitmap
-from ptopo.regrid.topo_regrid import Domain
+from ptopo.regrid.domain import Domain
 from ptopo.regrid.domain_mask import NorthPoleMask
 
 def add_regrid_parser(subparsers):
