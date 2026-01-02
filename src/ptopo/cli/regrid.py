@@ -1,13 +1,23 @@
 import sys
 import argparse
-import numpy
+import numpy as np
 import netCDF4
+import logging
 from ptopo.external.thinwall.python import GMesh
 from ptopo.regrid.configs import CalcConfig, RefineConfig, TileConfig, NorthPoleMode, NorthPoleConfig
-from ptopo.regrid.kernel import HitMap, TimeLog, topo_gen_mp, topo_gen, topo_gen_tiles, progress_north_pole_ring
+from ptopo.regrid.kernel import HitMap, TimeLog, topo_gen_tiles, progress_north_pole_ring
 from ptopo.regrid.output_utils import write_output, write_hitmap
 from ptopo.regrid.domain import Domain
 from ptopo.regrid.domain_mask import NorthPoleMask
+
+logger = logging.getLogger(__name__)
+
+def setup_logging(level):
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+        datefmt="%H:%M:%S"
+    )
 
 def add_regrid_parser(subparsers):
     parser = subparsers.add_parser(
@@ -16,6 +26,7 @@ def add_regrid_parser(subparsers):
     parser.set_defaults(func=regrid)
 
     parser.add_argument("-v", "--verbose", action='store_true')
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--verbosity", default=0, help='Granularity of log output')
 
     parser_tgt = parser.add_argument_group('Target grid')
@@ -82,37 +93,47 @@ def add_regrid_parser(subparsers):
     return parser
 
 def regrid(args):
+    if args.debug:
+        level = logging.DEBUG
+    elif args.verbose:
+        level = logging.INFO
+    else:
+        level = logging.WARNING
+
+    setup_logging(level)
+
     clock = TimeLog(['Read source', 'Read target', 'Setup', 'Regrid main', 'Regrid masked', 'Write output'])
 
     # ============================================================
     # Read source data
     # ============================================================
-    print('\n')
-    print('Reading source data from ', args.source)
-    if args.verbose:
-        print(  "'"+args.lon_src+"'", '-> lon_src')
-        print(  "'"+args.lat_src+"'", '-> lat_src')
-        print(  "'"+args.elev+"'", '-> elev')
-
     source_coord = args.source_coord or args.source
     lon_src = netCDF4.Dataset(source_coord)[args.lon_src][:]
     lat_src = netCDF4.Dataset(source_coord)[args.lat_src][:]
     elev = netCDF4.Dataset(args.source)[args.elev][:]
     if args.remove_src_repeat_lon:
         lon_src = lon_src[:-1]
-        elev = numpy.c_[ (elev[:,1] + elev[:,-1]) * 0.5, elev[:,1:-1] ]
+        elev = np.c_[ (elev[:,1] + elev[:,-1]) * 0.5, elev[:,1:-1] ]
     eds = GMesh.UniformEDS(lon_src, lat_src, elev)
     clock.delta('Read source')
+
+    if args.verbose:
+        logger.info(
+            "Read source data\n"
+            "  File %s\n"
+            "  lon_src = '%s'\n"
+            "  lat_src = '%s'\n"
+            "  elevation = '%s'",
+            args.source,
+            args.lon_src,
+            args.lat_src,
+            args.elev,
+        )
 
     # ============================================================
     # Read target grid
     # ============================================================
     if args.non_supergrid: raise Exception('Only supergrid is supported.')
-    print('\n')
-    print('Reading target grid from ', args.target_grid)
-    if args.verbose:
-        print(  "'"+args.lon_tgt+"'[::2, ::2]", '-> lonb_tgt')
-        print(  "'"+args.lat_tgt+"'[::2, ::2]", '-> latb_tgt')
 
     lonb_tgt = netCDF4.Dataset(args.target_grid)['x'][::2, ::2].data
     latb_tgt = netCDF4.Dataset(args.target_grid)['y'][::2, ::2].data
@@ -136,6 +157,17 @@ def regrid(args):
         tgt_fold_n = True
     clock.delta('Read target')
 
+    if args.verbose:
+        logger.info(
+            "Read target grid\n"
+            "  File %s\n"
+            "  lonb_tgt = '%s'[::2, ::2]\n"
+            "  latb_tgt = '%s'[::2, ::2]",
+            args.target_grid,
+            args.lon_tgt,
+            args.lat_tgt
+        )
+
     # ============================================================
     # Configurations
     # ============================================================
@@ -145,9 +177,6 @@ def regrid(args):
         _thinwalls=args.do_thinwalls, _effective_tw=args.do_thinwalls_effective, thinwalls_interp=args.thinwalls_interp,
         calc_roughness=args.do_roughness, calc_gradient=args.do_gradient, save_hits=args.save_hits
     )
-    if args.verbose:
-        print('\n')
-        calc_cfg.print_options()
 
     # Regridding and topo_gen options
     if NorthPoleMode(args.np_mode) == NorthPoleMode.MASK_ONLY:
@@ -162,9 +191,6 @@ def regrid(args):
         singularity_radius=singularity_radius,
         max_mb=args.max_mb
     )
-    if args.verbose:
-        print('\n')
-        refine_cfg.print_options()
 
     # Domain decomposition
     # nprocs = args.nprocs
@@ -175,9 +201,6 @@ def regrid(args):
     tile_cfg = TileConfig(
         pelayout=args.pe, tgt_halo=args.tgt_halo, norm_lon=True, subset_eds=True, src_halo=args.src_halo, bnd_tol_level=bnd_tol_level
     )
-    if args.verbose:
-        print('\n')
-        tile_cfg.print_options()
 
     # North Pole options
     do_north_pole = (refine_cfg.fixed_refine_level <= 0) and refine_cfg.resolution_limit and (not args.tgt_regional)
@@ -204,9 +227,19 @@ def regrid(args):
                     bnd_tol_level=bnd_tol_level
                 )
             )
-        if args.verbose:
-            print('\n')
-            np_cfg.print_options()
+
+    if args.verbose:
+        lines = ['Set up configs']
+        lines.extend(
+            [ calc_cfg.format(indent=2),
+              refine_cfg.format(indent=2),
+              tile_cfg.format(indent=2) ]
+        )
+        if do_north_pole:
+            lines.append(np_cfg.format(indent=2))
+        logger.info(
+            "\n".join(lines)
+        )
 
     # ============================================================
     # Main
@@ -214,8 +247,10 @@ def regrid(args):
 
     # Create North Pole mask
     if do_north_pole:
-        np_masks = NorthPoleMask(GMesh.GMesh(lon=lonb_tgt, lat=latb_tgt), counts=2, radius=singularity_radius)
+        np_masks = NorthPoleMask(GMesh.GMesh(lon=lonb_tgt, lat=latb_tgt), count=2, radius=singularity_radius)
         mask_res = [ mask.to_box() for mask in np_masks ]
+        if args.verbose:
+            logger.info( "Create North Pole masks\n%s", np_masks.format(indent=2) )
     else:
         mask_res = []
 
@@ -225,8 +260,7 @@ def regrid(args):
         reentrant_x=tgt_reentrant_x, fold_n=tgt_fold_n, mask_res=mask_res, eds=eds
     )
     if args.verbose:
-        print('\nTarget Domain:')
-        print(domain.format())
+        logger.info( "Create Target domain\n%s", domain.format(indent=2) )
 
     if calc_cfg.save_hits:
         hm = HitMap(lon=lon_src, lat=lat_src, from_cell_center=True)
@@ -236,19 +270,9 @@ def regrid(args):
 
     # Regrid
     if args.verbose:
-        print('\nStarting regridding the domain')
+       logger.info('Regrid the domain')
 
-    topo_gen_tiles(domain, hm, tile_cfg=tile_cfg, calc_cfg=calc_cfg, refine_cfg=refine_cfg, verbose=args.verbose)
-    # tiles = domain.make_tiles(config=tile_cfg, verbose=False)
-    # # clock.delta('Domain decomposition')
-
-    # twlist, hitlist = [], []
-    # for tile in tiles.flatten():
-    #     out = topo_gen(
-    #         tile, config=calc_cfg, refine_cfg=refine_cfg, verbose=True, timers=True
-    #     )
-    #     twlist.append( out['tw'] )
-    #     hitlist.append( out['hits'] )
+    topo_gen_tiles(domain, hm, tile_cfg=tile_cfg, calc_cfg=calc_cfg, refine_cfg=refine_cfg, verbose=args.verbose, debug=args.debug)
 
     # # if nprocs>1:
     # #     twlist = topo_gen_mp(subdomains.flatten(), nprocs=nprocs,
@@ -256,27 +280,18 @@ def regrid(args):
     # # else: # with nprocs==1, multiprocessing is not used.
     # #     twlist = [topo_gen(sdm, refine_cfg=refine_cfg, save_hits=(not (hm is None)), verbose=True, timers=True, tw_interp=args.thinwalls_interp) for sdm in subdomains.flatten()]
 
-    # domain.stitch_tiles(
-    #     twlist, tolerance=bnd_tol_level, config=calc_cfg, verbose=args.verbose
-    # )
-
-    # if calc_cfg.save_hits:
-    #     hm.stitch_hits(hitlist)
-
     clock.delta('Regrid main')
 
+    # Ring update North Pole
     if do_north_pole and np_cfg.mode == NorthPoleMode.RING_UPDATE:
-        progress_north_pole_ring(domain, hm=hm, init_masks=np_masks, np_cfg=np_cfg, calc_cfg=calc_cfg, refine_cfg=refine_cfg, tile_cfg=tile_cfg, verbose=True)
+        if args.verbose:
+            logger.info('Update North Pole')
+        progress_north_pole_ring(domain, hm=hm, init_masks=np_masks, np_cfg=np_cfg, calc_cfg=calc_cfg, refine_cfg=refine_cfg, verbosity=1)
+        clock.delta('Regrid masked')
 
-    # if args.fixed_refine_level<0:
-    #     if args.verbose:
-    #         print('Starting regridding masked North Pole')
-    #     # Donut update near the (geographic) north pole
-    #     dm.regrid_topography_masked(lat_end=np_lat_end, lat_step=np_lat_step, pelayout=pe_p, nprocs=nprocs, tgt_halo=args.tgt_halo, eds=eds, src_halo=args.src_halo,
-    #                                 refine_loop_args=refine_cfg, calc_args={}, hitmap=hm, verbose=args.verbose)
-    clock.delta('Regrid masked')
-
+    # ============================================================
     # Output to a netCDF file
+    # ============================================================
     write_output(
         domain, args.output, config=calc_cfg, output_refine=True, format='NETCDF3_64BIT_OFFSET', history=' '.join(sys.argv)
     )
@@ -287,6 +302,3 @@ def regrid(args):
     clock.delta('Write output')
 
     clock.print()
-
-# if __name__ == "__main__":
-#     main(sys.argv)

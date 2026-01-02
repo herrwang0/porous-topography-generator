@@ -76,7 +76,7 @@ class HitMap(GMesh.GMesh):
         """Plots hit map"""
         return axis.pcolormesh( self.lon, self.lat, self[:,:], **kwargs )
 
-def topo_gen(grid, calc_cfg=CalcConfig(), refine_cfg=RefineConfig(), verbose=True, timers=False):
+def topo_gen(grid, calc_cfg=CalcConfig(), refine_cfg=RefineConfig(), verbosity=0, timers=False):
     """
     Generate topography fields on a domain tile.
 
@@ -111,10 +111,6 @@ def topo_gen(grid, calc_cfg=CalcConfig(), refine_cfg=RefineConfig(), verbose=Tru
           Map of "hits" produced during the calculation.
     """
 
-    if verbose:
-        logger.info(f'Starting topo_gen() for domain {grid.bbox.position}')
-        print(f'Starting topo_gen() for domain {grid.bbox.position}')
-
     if (not refine_cfg.use_center) and (calc_cfg.calc_roughness or calc_cfg.calc_gradient):
         raise Exception('"use_center" needs to be used for roughness or gradient')
 
@@ -128,8 +124,10 @@ def topo_gen(grid, calc_cfg=CalcConfig(), refine_cfg=RefineConfig(), verbose=Tru
     # ============================================================
     # Refine the grid
     # ============================================================
+    if verbosity > 0:
+        logger.info(f'topo_gen(): refine grid for tile {grid.bbox.position}')
     levels = grid.refine_loop(
-        grid.eds, verbose=verbose, timers=False, mask_res=grid.mask_res, **refine_cfg.to_kwargs()
+        grid.eds, verbose=(verbosity >= 2), timers=False, mask_res=grid.mask_res, **refine_cfg.to_kwargs()
     )
 
     # Deepest refine level
@@ -172,8 +170,9 @@ def topo_gen(grid, calc_cfg=CalcConfig(), refine_cfg=RefineConfig(), verbose=Tru
     if timers:
         clock.delta('init thinwalls')
 
-    if verbose:
-        print('Refine level {:} {:}'.format(tw.rfl, tw))
+    if verbosity > 0:
+        logger.info(f'topo_gen(): coarsen grid for tile {grid.bbox.position}')
+        if verbosity >= 2: logger.debug('Refine level {:} {:}'.format(tw.rfl, tw))
 
     # ============================================================
     # Coarsen to the target grid
@@ -206,7 +205,7 @@ def topo_gen(grid, calc_cfg=CalcConfig(), refine_cfg=RefineConfig(), verbose=Tru
             tw.lift_ave_max()
         if timers: clock.delta('refine loop (effective thinwalls)')
         tw = tw.coarsen(do_thinwalls=calc_cfg.calc_thinwalls, do_effective=calc_cfg.calc_effective_tw)
-        if verbose: print('Refine level {:} {:}'.format(tw.rfl, tw))
+        if verbosity >= 2: logger.debug('Refine level {:} {:}'.format(tw.rfl, tw))
         if timers: clock.delta('refine loop (coarsen grid)')
     grid.update_thinwalls_arrays(tw)
     if timers: clock.delta('refine loop (total)', ref_time=loop_start)
@@ -239,23 +238,29 @@ def topo_gen(grid, calc_cfg=CalcConfig(), refine_cfg=RefineConfig(), verbose=Tru
     return out
 
 def topo_gen_tiles(domain, hm=None, tile_cfg=TileConfig(), calc_cfg=CalcConfig(), refine_cfg=RefineConfig(),
-                   verbose=False):
+                   verbose=False, debug=False):
     """
     A wrapper function of tiling and topo_gen
     """
-    tiles = domain.make_tiles(
-        config=tile_cfg, verbose=verbose
-    )
+
+    if debug:
+        verbosity = 2
+    elif verbose:
+        verbosity = 1
+    else:
+        verbosity = 0
+
+    tiles = domain.make_tiles(config=tile_cfg, verbose=verbose)
 
     twlist, hitlist = [], []
     for tile in tiles.flatten():
         out = topo_gen(
-            tile, calc_cfg=calc_cfg, refine_cfg=refine_cfg, verbose=verbose, timers=True,
+            tile, calc_cfg=calc_cfg, refine_cfg=refine_cfg, verbosity=verbosity, timers=True,
         )
         twlist.append( out['tw'] )
         hitlist.append( out['hits'] )
 
-    domain.stitch_tiles(twlist, tolerance=tile_cfg.bnd_tol_level, config=calc_cfg, verbose=verbose)
+    domain.stitch_tiles(twlist, tolerance=tile_cfg.bnd_tol_level, config=calc_cfg, verbose=(verbosity == 2))
 
     if hm and calc_cfg.save_hits:
         hm.stitch_hits(hitlist)
@@ -272,20 +277,65 @@ def topo_gen_mp(domain_list, nprocs=None, calc_cfg=CalcConfig(), refine_cfg=Refi
     return tw_list
 
 def progress_north_pole_ring(
-        domain, hm, init_masks,
-        np_cfg=NorthPoleConfig(), calc_cfg=CalcConfig(), refine_cfg=RefineConfig(), tile_cfg=TileConfig(),
-        verbose=False
+        domain, hm, init_masks, np_cfg=NorthPoleConfig(), calc_cfg=CalcConfig(), refine_cfg=RefineConfig(),
+        verbosity=0
     ):
+    """
+    Progressively update topography in latitude rings near the North Pole.
+
+    This routine performs a ring-by-ring topography update starting from an
+    initial set of outer latitude masks and moving poleward. At each step,
+    a subdomain is constructed between successive latitude rings, topography
+    is generated on that subdomain, and the results are stitched back into
+    the parent domain.
+
+    The operation modifies ``domain`` in-place.
+
+    Parameters
+    ----------
+    domain : Domain
+        The parent domain on which North Pole topography updates are applied.
+        This object is modified in-place.
+    hm :  HitMap
+          Map of "hits" produced during the calculation.
+    init_masks : list of NorthPoleMask
+        Initial outer-ring masks defining the starting latitude band.
+    np_cfg : NorthPoleConfig, optional
+        Configuration controlling North Pole processing, including latitude
+        range, ring spacing, and halo size.
+    calc_cfg : CalcConfig, optional
+        Configuration options controlling which topographic quantities are
+        computed.
+    refine_cfg : RefineConfig, optional
+        Configuration options passed to ``GMesh.refine_loop()`` for mesh
+        refinement during topography generation.
+    verbosity : bool, optional
+        Granularity of logging messages.
+
+    Notes
+    -----
+    - Latitude rings are generated from ``np_cfg.lat_start`` to
+      ``np_cfg.lat_stop`` with spacing ``np_cfg.lat_step``.
+    - For each ring, a masked subdomain is created and processed independently.
+    - Results are stitched back into the parent domain after each ring update.
+    - North-fold boundaries are reconciled after each iteration.
+
+    This function is intended for use in polar-region workflows where
+    progressive refinement or masking is required near the North Pole.
+    """
+
     outer_rings = init_masks
     start, stop, step = np_cfg.lat_start, np_cfg.lat_stop, np_cfg.lat_step
-    for ring_lat in np.arange( start + step, stop + step, step):
-        inner_rings = NorthPoleMask(domain, counts=2, radius=90 - ring_lat)
+    for ring_lat in np.arange(start + step, stop + step, step):
+        if verbosity > 0:
+            logger.info('Mask latitude: %s', ring_lat)
+        inner_rings = NorthPoleMask(domain, count=2, radius=90 - ring_lat)
         for outer, inner in zip(outer_rings, inner_rings):
             mask_domain = domain.make_subdomain(
                 bbox=outer.with_halo(halo=np_cfg.pole_halo), norm_lon=True, global_masks=[ inner.to_box() ], subset_eds=False
             )
-            topo_gen_tiles(mask_domain, hm, tile_cfg=tile_cfg, calc_cfg=calc_cfg, refine_cfg=refine_cfg, verbose=verbose)
+            topo_gen_tiles(mask_domain, hm, tile_cfg=np_cfg.tile_cfg, calc_cfg=calc_cfg, refine_cfg=refine_cfg, verbose=(verbosity>0), debug=(verbosity>1))
 
-            domain.stitch_mask(mask_domain)
+            domain.stitch_mask(mask_domain, verbose=(verbosity == 2))
         outer_rings = inner_rings
-        domain.stitch_fold_n( tolerance=tile_cfg.bnd_tol_level, calc_effective=calc_cfg.calc_effective_tw, verbose=verbose )
+        domain.stitch_fold_n( tolerance=np_cfg.tile_cfg.bnd_tol_level, calc_effective=calc_cfg.calc_effective_tw, verbose=(verbosity>1) )
