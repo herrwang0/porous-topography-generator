@@ -1,9 +1,11 @@
 import numpy as np
-import warnings
+import logging
 
 from ptopo.external.thinwall.python import ThinWalls
 from .tile_utils import slice_array, decompose_domain, normalize_longitude, box_halo, BoundaryBox, reverse_slice
 from .configs import CalcConfig, TileConfig
+
+logger = logging.getLogger(__name__)
 
 class Domain(ThinWalls.ThinWalls):
     """
@@ -140,7 +142,6 @@ class Domain(ThinWalls.ThinWalls):
             If True, subset source data
         src_halo : integer, optional
             Halo size of the source grid in either direction.
-        verbose : bool, optional
 
         Returns
         ----------
@@ -200,23 +201,16 @@ class Domain(ThinWalls.ThinWalls):
         norm_lon = self.is_geo_coord if config.norm_lon is None else config.norm_lon
 
         if config.pelayout[1]==1 and config.tgt_halo>0:
-            warnings.warn(
-                f"only 1 subdomain in i-direction, which may not work with bi-polar cap.",
-                UserWarning
+            logger.warning(
+                f"only 1 subdomain in i-direction, which may not work with bi-polar cap."
             )
         if (not config.symmetry[1]) and self.fold_n:
-            warnings.warn(
+            logger.warning(
                 "domain decomposition is not guaranteed to be symmetric in x direction, which may not work with bi-polar cap.",
-                UserWarning
             )
 
         j_domain = decompose_domain(self.nj, config.pelayout[0], symmetric=config.symmetry[0])
         i_domain = decompose_domain(self.ni, config.pelayout[1], symmetric=config.symmetry[1])
-        if verbose:
-            print(f'Domain is decomposed to {config.pelayout}. Halo size = {config.tgt_halo:d}.')
-            print('  i: ', i_domain)
-            print('  j: ', j_domain)
-            print('\n')
 
         chunks = np.empty( (j_domain.size, i_domain.size), dtype=object )
         self.pelayout = np.empty( (j_domain.size, i_domain.size), dtype=object )
@@ -229,8 +223,23 @@ class Domain(ThinWalls.ThinWalls):
                     bbox, norm_lon=norm_lon, global_masks=self.mask_res, subset_eds=config.subset_eds, src_halo=config.src_halo
                 )
 
-                if verbose:
-                    print(chunks[pe_j, pe_i], '\n')
+        if verbose:
+            lines = [
+                f'Decompose domain',
+                f'  Layout = {config.pelayout}, Halo size = {config.tgt_halo:d}',
+                f'    i: {i_domain}',
+                f'    j: {j_domain}',
+            ]
+
+            lines.extend(
+                [
+                    f'  ({pe_j}, {pe_i}):' + chunks[pe_j, pe_i].format(indent=4)
+                    for pe_j in range(len(j_domain))
+                    for pe_i in range(len(i_domain))
+                ]
+            )
+            logger.debug("\n".join(lines))
+
         return chunks
 
     def _stitch_tile(self, tile, config):
@@ -498,7 +507,7 @@ Source grid size
             raise Exception(msg)
         if np.any(rfl1!=rfl2):
             if verbose:
-                print(msg+'Use higher rfl')
+                logger.debug(msg+'Use higher rfl')
             edge = ThinWalls.StatsBase(edge1.shape)
             edge.low = np.where(rfl1>rfl2, edge1.low, edge2.low)
             edge.ave = np.where(rfl1>rfl2, edge1.ave, edge2.ave)
@@ -508,7 +517,7 @@ Source grid size
             if tolerance==1:
                 raise Exception(msg)
             if verbose:
-                print(msg+'Use shallower depth')
+                logger.debug(msg+'Use shallower depth')
             edge = ThinWalls.StatsBase(edge1.shape)
             edge.low = np.maximum(edge1.low, edge2.low)
             edge.ave = np.maximum(np.maximum(edge1.ave, edge2.ave), edge.low)
@@ -516,5 +525,5 @@ Source grid size
             return edge
     else:
         if np.any(rfl1!=rfl2) and verbose: # This should hardly happen.
-            print(message+' have the same edge but different refinement levels '+str_rfls+'.')
+            logger.debug(message+' have the same edge but different refinement levels '+str_rfls+'.')
         return edge1

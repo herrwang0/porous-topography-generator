@@ -26,11 +26,11 @@ class NorthPoleMask:
     def format(self, indent=0):
         pad = " " * indent
         disp = [
+            f'{pad}' + str(type(self)),
             f'{pad}North Pole mask rectangles (count = {self.count}, radius = {self.radius:5.2f}{chr(176):1s})'
         ]
         for box in self:
-            idx_str = f"{box.j0:d}, {box.j1:d}, {box.i0:d}, {box.i1:d}"
-            disp.append( f'{pad}  Range : [{idx_str}], shape: ({box.nj:d}, {box.ni:d})' )
+            disp.append( box.format(indent=indent + 2) )
         return '\n'.join(disp)
 
     def __getitem__(self, index):
@@ -59,8 +59,8 @@ class NorthPoleMask:
             assert (iiw.min()+iie.max()==grid.ni) and ((iiw.max()+iie.min()==grid.ni)), \
                 'ni in the two mask domains mismatch.'
             recs = [
-                  BoundaryBox( j0=jj.min(), j1=jj.max(), i0=iiw.min(), i1=iiw.max() ),
-                  BoundaryBox( j0=jj.min(), j1=jj.max(), i0=iie.min(), i1=iie.max() )
+                  BoundaryBox( j0=jj.min(), j1=jj.max(), i0=iiw.min(), i1=iiw.max(), position='North Pole' ),
+                  BoundaryBox( j0=jj.min(), j1=jj.max(), i0=iie.min(), i1=iie.max(), position='North Pole' )
             ]
             # self.masks = [(jj.min(), 2*grid.nj-jj.min(), iiw.min(), iiw.max()),
             #                    (jj.min(), 2*grid.nj-jj.min(), iie.min(), iie.max())] # extend passing the northern boundary for halos
