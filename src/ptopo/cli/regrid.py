@@ -9,15 +9,9 @@ from ptopo.regrid.kernel import HitMap, TimeLog, topo_gen_tiles, progress_north_
 from ptopo.regrid.output_utils import write_output, write_hitmap
 from ptopo.regrid.domain import Domain
 from ptopo.regrid.domain_mask import NorthPoleMask
+from ptopo.logging_utils import setup_logging
 
 logger = logging.getLogger(__name__)
-
-def setup_logging(level):
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
-        datefmt="%H:%M:%S"
-    )
 
 def add_regrid_parser(subparsers):
     parser = subparsers.add_parser(
