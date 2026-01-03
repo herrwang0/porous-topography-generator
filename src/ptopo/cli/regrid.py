@@ -111,18 +111,17 @@ def regrid(args):
     eds = GMesh.UniformEDS(lon_src, lat_src, elev)
     clock.delta('Read source')
 
-    if args.verbose:
-        logger.info(
-            "Read source data\n"
-            "  File %s\n"
-            "  lon_src = '%s'\n"
-            "  lat_src = '%s'\n"
-            "  elevation = '%s'",
-            args.source,
-            args.lon_src,
-            args.lat_src,
-            args.elev,
-        )
+    logger.info(
+        "Read source data\n"
+        "  File %s\n"
+        "  lon_src = '%s'\n"
+        "  lat_src = '%s'\n"
+        "  elevation = '%s'",
+        args.source,
+        args.lon_src,
+        args.lat_src,
+        args.elev,
+    )
 
     # ============================================================
     # Read target grid
@@ -151,16 +150,15 @@ def regrid(args):
         tgt_fold_n = True
     clock.delta('Read target')
 
-    if args.verbose:
-        logger.info(
-            "Read target grid\n"
-            "  File %s\n"
-            "  lonb_tgt = '%s'[::2, ::2]\n"
-            "  latb_tgt = '%s'[::2, ::2]",
-            args.target_grid,
-            args.lon_tgt,
-            args.lat_tgt
-        )
+    logger.info(
+        "Read target grid\n"
+        "  File %s\n"
+        "  lonb_tgt = '%s'[::2, ::2]\n"
+        "  latb_tgt = '%s'[::2, ::2]",
+        args.target_grid,
+        args.lon_tgt,
+        args.lat_tgt
+    )
 
     # ============================================================
     # Configurations
@@ -222,18 +220,17 @@ def regrid(args):
                 )
             )
 
-    if args.verbose:
-        lines = ['Set up configs']
-        lines.extend(
-            [ calc_cfg.format(indent=2),
-              refine_cfg.format(indent=2),
-              tile_cfg.format(indent=2) ]
-        )
-        if do_north_pole:
-            lines.append(np_cfg.format(indent=2))
-        logger.info(
-            "\n".join(lines)
-        )
+    lines = ['Set up configs']
+    lines.extend(
+        [ calc_cfg.format(indent=2),
+            refine_cfg.format(indent=2),
+            tile_cfg.format(indent=2) ]
+    )
+    if do_north_pole:
+        lines.append(np_cfg.format(indent=2))
+    logger.info(
+        "\n".join(lines)
+    )
 
     # ============================================================
     # Main
@@ -243,8 +240,7 @@ def regrid(args):
     if do_north_pole:
         np_masks = NorthPoleMask(GMesh.GMesh(lon=lonb_tgt, lat=latb_tgt), count=2, radius=singularity_radius)
         mask_res = [ mask.to_box() for mask in np_masks ]
-        if args.verbose:
-            logger.info( "Create North Pole masks\n%s", np_masks.format(indent=2) )
+        logger.info( "Create North Pole masks\n%s", np_masks.format(indent=2) )
     else:
         mask_res = []
 
@@ -253,8 +249,7 @@ def regrid(args):
         lon=lonb_tgt, lat=latb_tgt, Idx=Idx, Idy=Idy,
         reentrant_x=tgt_reentrant_x, fold_n=tgt_fold_n, mask_res=mask_res, eds=eds
     )
-    if args.verbose:
-        logger.info( "Create Target domain\n%s", domain.format(indent=2) )
+    logger.info( "Create Target domain\n%s", domain.format(indent=2) )
 
     if calc_cfg.save_hits:
         hm = HitMap(lon=lon_src, lat=lat_src, from_cell_center=True)
@@ -263,9 +258,7 @@ def regrid(args):
     clock.delta('Setup')
 
     # Regrid
-    if args.verbose:
-       logger.info('Regrid the domain')
-
+    logger.info('Regrid the domain')
     topo_gen_tiles(domain, hm, tile_cfg=tile_cfg, calc_cfg=calc_cfg, refine_cfg=refine_cfg, verbose=args.verbose, debug=args.debug)
 
     # # if nprocs>1:
@@ -278,8 +271,7 @@ def regrid(args):
 
     # Ring update North Pole
     if do_north_pole and np_cfg.mode == NorthPoleMode.RING_UPDATE:
-        if args.verbose:
-            logger.info('Update North Pole')
+        logger.info('Update North Pole')
         progress_north_pole_ring(domain, hm=hm, init_masks=np_masks, np_cfg=np_cfg, calc_cfg=calc_cfg, refine_cfg=refine_cfg, verbosity=1)
         clock.delta('Regrid masked')
 
