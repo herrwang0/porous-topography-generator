@@ -1,8 +1,12 @@
 import argparse
 import numpy as np
 import netCDF4
+import logging
 from pathlib import Path
 from ptopo.masking.ice9 import ice9it, copy_var, mask_uv
+from ptopo.logging_utils import setup_logging
+
+logger = logging.getLogger(__name__)
 
 def add_masking_parser(subparsers):
     parser = subparsers.add_parser(
@@ -34,6 +38,12 @@ def add_masking_parser(subparsers):
 
 def run_masking(args):
     verbose = not args.quiet
+    if verbose:
+        level = logging.INFO
+    else:
+        level = logging.WARNING
+
+    setup_logging(level)
 
     var_out = args.var_out or args.var_in
 
@@ -49,9 +59,13 @@ def run_masking(args):
 
     mask_value = -args.flood_depth if args.mask_value is None else args.mask_value
 
-    if verbose:
-        print('Generate file ', file_out)
-        print('    from ', args.file_in)
+    logger.info(
+        "Start masking bathymetry with ice9\n"
+        "  Generate file %s\n"
+        "  from %s",
+        file_out,
+        args.file_in
+    )
 
     ncsrc = netCDF4.Dataset(args.file_in, 'r')
     depth = ncsrc[args.var_in][:]
@@ -62,9 +76,11 @@ def run_masking(args):
     else:
         starting_point = args.starting_point
 
-    if verbose:
-        print('  Starting point (j,i): ', starting_point)
-        print('  Wet depth: ', -args.flood_depth)
+    logger.info(
+        "Starting point (j,i): %s. Wet depth: %s",
+        starting_point,
+        -args.flood_depth
+    )
 
     maskc = ice9it(-depth, start=starting_point, dc=args.flood_depth, to_mask=True, to_float=False)
 
@@ -106,8 +122,11 @@ def run_masking(args):
     else:
         depth[maskc] = mask_value
 
-    if verbose:
-        print(f"  New topography has {ny*nx-maskc.sum()} out of {ny*nx} wet points.")
+    logger.info(
+        "New topography has %s out of %s wet points.",
+        ny * nx - maskc.sum(),
+        ny * nx
+    )
 
     # write
     ncout = netCDF4.Dataset(file_out, 'w')
@@ -140,5 +159,6 @@ def run_masking(args):
     ncout.close()
     ncsrc.close()
 
-    if verbose:
-        print('Done ice9')
+    logger.info(
+        'Done ice9'
+    )
