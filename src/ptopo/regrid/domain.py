@@ -223,22 +223,21 @@ class Domain(ThinWalls.ThinWalls):
                     bbox, norm_lon=norm_lon, global_masks=self.mask_res, subset_eds=config.subset_eds, src_halo=config.src_halo
                 )
 
-        if verbose:
-            lines = [
-                f'Decompose domain',
-                f'  Layout = {config.pelayout}, Halo size = {config.tgt_halo:d}',
-                f'    i: {i_domain}',
-                f'    j: {j_domain}',
-            ]
+        lines = [
+            f'Decompose domain',
+            f'  Layout = {config.pelayout}, Halo size = {config.tgt_halo:d}',
+            f'    i: {i_domain}',
+            f'    j: {j_domain}',
+        ]
 
-            lines.extend(
-                [
-                    f'  ({pe_j}, {pe_i}):' + chunks[pe_j, pe_i].format(indent=4)
-                    for pe_j in range(len(j_domain))
-                    for pe_i in range(len(i_domain))
-                ]
-            )
-            logger.debug("\n".join(lines))
+        lines.extend(
+            [
+                f'  ({pe_j}, {pe_i}):' + chunks[pe_j, pe_i].format(indent=4)
+                for pe_j in range(len(j_domain))
+                for pe_i in range(len(i_domain))
+            ]
+        )
+        logger.debug("\n".join(lines))
 
         return chunks
 
@@ -506,8 +505,7 @@ Source grid size
         if tolerance==0:
             raise Exception(msg)
         if np.any(rfl1!=rfl2):
-            if verbose:
-                logger.debug(msg+'Use higher rfl')
+            logger.debug(msg+'Use higher rfl')
             edge = ThinWalls.StatsBase(edge1.shape)
             edge.low = np.where(rfl1>rfl2, edge1.low, edge2.low)
             edge.ave = np.where(rfl1>rfl2, edge1.ave, edge2.ave)
@@ -516,8 +514,7 @@ Source grid size
         else:
             if tolerance==1:
                 raise Exception(msg)
-            if verbose:
-                logger.debug(msg+'Use shallower depth')
+            logger.debug(msg+'Use shallower depth')
             edge = ThinWalls.StatsBase(edge1.shape)
             edge.low = np.maximum(edge1.low, edge2.low)
             edge.ave = np.maximum(np.maximum(edge1.ave, edge2.ave), edge.low)
