@@ -2,7 +2,7 @@ import numpy as np
 import logging
 
 from ptopo.external.thinwall.python import ThinWalls
-from .tile_utils import slice_array, decompose_domain, normalize_longitude, box_halo, BoundaryBox, reverse_slice
+from .tile_utils import slice_array, decompose_domain, normalize_longitude, BoundaryBox
 from .configs import CalcConfig, TileConfig
 
 logger = logging.getLogger(__name__)
