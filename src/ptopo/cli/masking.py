@@ -3,7 +3,8 @@ import numpy as np
 import netCDF4
 import logging
 from pathlib import Path
-from ptopo.masking.ice9 import ice9it, copy_var, mask_uv
+from ptopo.masking.ice9 import ice9it, copy_var
+from ptopo.masking.mask_uv import wet_uv
 from ptopo.logging_utils import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -85,7 +86,7 @@ def run_masking(args):
     maskc = ice9it(-depth, start=starting_point, dc=args.flood_depth, to_mask=True, to_float=False)
 
     if args.do_subgrid:
-        masku, maskv = mask_uv(~maskc, reentrant_x=True, fold_n=True, to_mask=True, to_float=False)
+        masku, maskv = wet_uv(~maskc, reentrant_x=True, fold_n=True, to_mask=True, to_float=False)
 
         cvar = dict().fromkeys(args.subgrid_c_var)
         uvar = dict().fromkeys(args.subgrid_u_var)
